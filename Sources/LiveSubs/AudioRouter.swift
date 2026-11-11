@@ -175,7 +175,7 @@ final class AudioRouter: @unchecked Sendable {
     func fedSeconds() -> Double { queue.sync { fed } }
     /// Analyzer clock now, the silence running at the end of it, and the last pause before that.
     func clock() -> (fed: Double, silence: Double, pause: (end: Double, length: Double)) {
-        queue.sync { (fed, silenceRun, pause) }
+        queue.sync { (fed: fed, silence: silenceRun, pause: pause) }
     }
 
     func attach(format: AVAudioFormat, continuation: AsyncStream<AnalyzerInput>.Continuation, replaySeconds: Double = 0) {
@@ -278,10 +278,19 @@ enum AudioFileWriter {
     /// Rewraps `partial(url)` into `url` without re-encoding, then removes the partial file.
     /// A partial file next to an .m4a means the last rewrap was cut short: it is done again.
     /// `until`: seconds to keep from the start (the silent tail of a meeting that ended by itself).
+    ///
+    /// It is safe to call twice: the second call finds no partial and leaves the finished file
+    /// alone. A file that is already there is never taken away, because a rewrap that failed
+    /// would otherwise leave the recording with nothing at all.
     nonisolated static func finish(_ url: URL, until: Double? = nil) async {
         let src = partial(url)
         guard FileManager.default.fileExists(atPath: src.path) else { return }
-        try? FileManager.default.removeItem(at: url)
+        // A file that is already finished is kept: the partial next to it is the leftover of a
+        // rewrap that was cut short, not a recording that needs replacing.
+        if FileManager.default.fileExists(atPath: url.path) {
+            try? FileManager.default.removeItem(at: src)
+            return
+        }
         let asset = AVURLAsset(url: src)
         guard let export = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough) else { return }
         if let until { export.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: until, preferredTimescale: 600)) }
@@ -290,7 +299,8 @@ enum AudioFileWriter {
             try? FileManager.default.removeItem(at: src)
         } catch {
             debugLog("audio rewrap failed \(url.lastPathComponent): \(error)")
-            try? FileManager.default.removeItem(at: url)
+            // The partial is left where it is: it is still readable, and the recording is not
+            // thrown away with it.
         }
     }
 }

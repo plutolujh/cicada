@@ -261,7 +261,7 @@ extension MenuPanelView {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.notesShown ? L("纪要窗口已打开") : L("纪要窗口已收起"))
                             .font(.system(size: 12)).foregroundStyle(Palette.ink)
-                        if !model.ling.hasKey {
+                        if !model.ai.hasKey {
                             Text("填入 API key 后可生成纪要；文字记录照常保存")
                                 .font(.system(size: 11)).foregroundStyle(Palette.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -581,6 +581,8 @@ struct MainWindowView: View {
     @State private var view = "both"
     @State private var titleDraft = ""
     @State private var tab = "notes"
+    /// The records window shows the meetings, or the recorder.
+    @State private var surface = "meetings"
     @State private var jumpTo: Double?
     /// A topic's time picked in the notes, for the bilingual column beside them.
     @State private var quoteJump: Double?
@@ -609,14 +611,22 @@ struct MainWindowView: View {
         // pill lives in the window's toolbar (`MainToolbar`). With no meetings yet, only the
         // welcome shows: an empty list is noise.
         HStack(spacing: 0) {
-            if !store.sessions.isEmpty {
+            if surface == "meetings", !store.sessions.isEmpty {
                 sidebar
                     .frame(width: 232)
                     .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
             }
-            detail
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
+            VStack(spacing: 0) {
+                surfaceSwitch
+                if surface == "record" {
+                    RecordView(engine: model.recorder, model: model)
+                } else {
+                    detail
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
         }
         .background(Color.white.ignoresSafeArea())
         .background(Button("") { searchFocused = true }.keyboardShortcut("f").opacity(0))
@@ -626,6 +636,29 @@ struct MainWindowView: View {
             tab = parts.count > 1 ? parts[1] : "notes"
             if parts.count > 2 { view = parts[2] }
         }
+    }
+
+    /// 会议 / 录音: the two things the records window does.
+    private var surfaceSwitch: some View {
+        HStack(spacing: 18) {
+            surfaceButton(L("会议"), id: "meetings")
+            surfaceButton(L("录音"), id: "record")
+            Spacer()
+        }
+        .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 10)
+        .overlay(alignment: .bottom) { Rectangle().fill(Self.hairline).frame(height: 1) }
+    }
+
+    private func surfaceButton(_ title: String, id: String) -> some View {
+        let on = surface == id
+        return Button { surface = id } label: {
+            Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Palette.ink : Palette.secondary)
+                .padding(.bottom, 6)
+                .overlay(alignment: .bottom) { Rectangle().fill(on ? Palette.ink : .clear).frame(height: 2) }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     static let hairline = Color(red: 0.941, green: 0.945, blue: 0.957)
@@ -804,7 +837,7 @@ struct MainWindowView: View {
                         }
                 } else if tab == "notes" {
                     HStack(spacing: 0) {
-                        SessionNotesView(model: model, engine: model.notes, ling: model.ling, session: s,
+                        SessionNotesView(model: model, engine: model.notes, ai: model.ai, session: s,
                                          header: AnyView(header(s))) { t in
                             // Beside the notes, a topic's time scrolls the column; otherwise it opens the transcript.
                             if sideBySide { quoteJump = t } else { jumpTo = t; tab = "transcript" }
@@ -1098,7 +1131,7 @@ struct MainWindowView: View {
 struct SessionNotesView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var engine: NotesEngine
-    @ObservedObject var ling: LingClient
+    @ObservedObject var ai: AIClient
     let session: Session
     /// The page's title block, scrolling with the notes.
     var header: AnyView = AnyView(EmptyView())
@@ -1115,18 +1148,18 @@ struct SessionNotesView: View {
                 if let notes, !notes.isEmpty {
                     NotesContentView(notes: notes, fresh: live ? engine.fresh : [], live: live, document: true,
                                      endedAt: session.lines.last?.t, onJump: onJump)
-                } else if generating || (live && ling.hasKey && !session.lines.isEmpty) {
+                } else if generating || (live && ai.hasKey && !session.lines.isEmpty) {
                     NotesGeneratingView(heard: session.lines.count)
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
                         Text(generating ? L("正在整理纪要…") : live ? L("纪要会在会议进行中自动生成") : L("这场会议还没有纪要"))
                             .font(.system(size: 15, weight: .bold))
-                        Text(ling.hasKey ? L("使用 Ling 将文字记录整理为总结、议题、结论和人名，约需半分钟。")
+                        Text(ai.hasKey ? L("使用 AI 服务将文字记录整理为总结、议题、结论和人名，约需半分钟。")
                                          : L("前往 设置 › AI 服务 填入 Ling 的 API key 后即可生成。"))
                             .font(.system(size: 13)).foregroundStyle(Palette.secondary)
                         if !live {
                             HStack(spacing: 8) {
-                                if ling.hasKey {
+                                if ai.hasKey {
                                     SoftButton(generating ? L("正在生成…") : L("生成纪要"), dark: true) {
                                         engine.generate(for: session.id)
                                     }
