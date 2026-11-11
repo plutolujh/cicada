@@ -18,6 +18,13 @@ struct RecordView: View {
     /// Keep the audio next to the transcript.
     private var keepsAudio: Bool { model.recordKeepsAudio }
 
+    /// The sentence being corrected, when the user is correcting one.
+    @State private var editing: String?
+    /// The words being corrected.
+    @State private var editText = ""
+    /// The export menu, when it is open.
+    @State private var exporting = false
+
     var body: some View {
         HStack(spacing: 0) {
             left
@@ -57,6 +64,8 @@ struct RecordView: View {
             Text("新录音").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
             Spacer(minLength: 0)
             chips
+            displayPicker
+            exportButton
             recordButton
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
@@ -90,6 +99,57 @@ struct RecordView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// What the transcript shows: the words as they were said, the translation, or both.
+    ///
+    /// The picker only appears when there is a translation to show; without one, the original
+    /// is all there is.
+    private var displayPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(RecordEngine.Display.allCases, id: \.self) { mode in
+                Button { engine.display = mode } label: {
+                    Text(displayTitle(mode)).font(.system(size: 11, weight: engine.display == mode ? .semibold : .regular))
+                        .foregroundStyle(engine.display == mode ? Palette.accentInk : Palette.secondary)
+                        .padding(.horizontal, 8).frame(height: 26)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.fill))
+        .opacity(target == "none" ? 0.4 : 1)
+        .disabled(target == "none")
+        .help(L("原文、译文或双语"))
+    }
+
+    private func displayTitle(_ mode: RecordEngine.Display) -> LocalizedStringKey {
+        switch mode {
+        case .original: return "原文"
+        case .translated: return "译文"
+        case .bilingual: return "双语"
+        }
+    }
+
+    /// The button that exports the recording, in the same formats a meeting can be exported in.
+    private var exportButton: some View {
+        Menu {
+            Button(L("导出 Markdown")) { model.exportRecording(kind: "md") }
+            Button(L("导出 Word")) { model.exportRecording(kind: "word") }
+            Button(L("导出字幕 (SRT)")) { model.exportRecording(kind: "srt") }
+            Divider()
+            Button(L("复制 Markdown")) { model.exportRecording(kind: "copy") }
+        } label: {
+            Image(systemName: "square.and.arrow.up").font(.system(size: 12))
+                .foregroundStyle(model.recordSession == nil ? Palette.tertiary : Palette.secondary)
+                .frame(width: 28, height: 26)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(model.recordSession == nil)
+        .help(L("导出录音"))
     }
 
     /// The button that starts and stops the recording: a red dot while it runs.
@@ -129,13 +189,7 @@ struct RecordView: View {
                             .id(line.id)
                     }
                     if !engine.live.isEmpty {
-                        HStack(alignment: .top, spacing: 10) {
-                            Text(RecordEngine.clock(engine.elapsed))
-                                .font(.system(size: 11).monospacedDigit()).foregroundStyle(Palette.tertiary)
-                                .frame(width: 40, alignment: .leading)
-                            Text(engine.live).font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                            Spacer(minLength: 0)
-                        }
+                        liveRow
                     }
                     Color.clear.frame(height: 1).id("bottom")
                 }
@@ -158,6 +212,40 @@ struct RecordView: View {
         .padding(.top, 24)
     }
 
+    /// The sentence being spoken right now: the words show up as they are said.
+    private var liveRow: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(RecordEngine.clock(engine.elapsed))
+                .font(.system(size: 11).monospacedDigit()).foregroundStyle(Palette.tertiary)
+                .frame(width: 40, alignment: .leading)
+            VStack(alignment: .leading, spacing: 3) {
+                if engine.liveWords.isEmpty {
+                    Text(engine.live).font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                } else {
+                    // The words are shown one by one, the way they are heard; the newest one is
+                    // the accent colour, so the eye follows the speaker.
+                    Text(liveText)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// The words of the sentence being heard, with the newest one marked.
+    private var liveText: AttributedString {
+        var out = AttributedString()
+        for (i, word) in engine.liveWords.enumerated() {
+            var piece = AttributedString(word.text)
+            piece.foregroundColor = i == engine.liveWords.count - 1 ? Palette.accent : Palette.ink
+            out.append(piece)
+            out.append(AttributedString(" "))
+        }
+        return out
+    }
+
     /// One settled sentence: when it was said, what was said, and what it means.
     private func row(_ line: RecordLine) -> some View {
         HStack(alignment: .top, spacing: 10) {
@@ -174,15 +262,107 @@ struct RecordView: View {
                             .foregroundStyle(SpeakerColor.ink(person))
                     }
                 }
-                Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let t = line.translation, !t.isEmpty {
-                    Text(t).font(.system(size: 13)).foregroundStyle(Palette.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                if editing == line.id {
+                    editor(line)
+                } else {
+                    texts(line)
                 }
             }
             Spacer(minLength: 0)
+            lineActions(line)
         }
+    }
+
+    /// The words of a settled sentence, in the mode the transcript is in.
+    @ViewBuilder
+    private func texts(_ line: RecordLine) -> some View {
+        let translation = line.translation.flatMap { $0.isEmpty ? nil : $0 }
+        switch engine.display {
+        case .original:
+            Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+        case .translated:
+            if let translation {
+                Text(translation).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case .bilingual:
+            Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if let translation {
+                Text(translation).font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The box the words are corrected in.
+    private func editor(_ line: RecordLine) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField(L("改正这句话"), text: $editText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .lineLimit(2...6)
+                .padding(6)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Palette.fill))
+            HStack(spacing: 10) {
+                Button(L("保存")) {
+                    engine.edit(line.id, text: editText)
+                    editing = nil
+                }
+                .font(.system(size: 12, weight: .semibold))
+                Button(L("取消")) { editing = nil }
+                    .font(.system(size: 12))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Palette.accentInk)
+        }
+    }
+
+    /// The little buttons beside a sentence: play it, change it, cut it up.
+    @ViewBuilder
+    private func lineActions(_ line: RecordLine) -> some View {
+        HStack(spacing: 8) {
+            if keepsAudio, engine.audioURL != nil {
+                Button {
+                    engine.play(from: line.t)
+                } label: {
+                    Image(systemName: "play.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Palette.tertiary)
+                .help(L("从这里播放"))
+            }
+            Button {
+                editText = line.text
+                editing = line.id
+            } label: {
+                Image(systemName: "pencil").font(.system(size: 10))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Palette.tertiary)
+            .help(L("改一下"))
+            Menu {
+                Button(L("和下一句合并")) {
+                    guard let next = engine.lines.first(where: { $0.t > line.t }) else { return }
+                    engine.merge(line.id, with: next.id)
+                }
+                Button(L("从这里分成两句")) {
+                    engine.split(line.id, at: max(1, Array(line.text).count / 2))
+                }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 10))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .foregroundStyle(Palette.tertiary)
+            .help(L("合并或拆分"))
+        }
+        .padding(.top, 2)
     }
 
     /// The lines where the voice changes: the name is shown there only.

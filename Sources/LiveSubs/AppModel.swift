@@ -112,6 +112,7 @@ final class AppModel: ObservableObject {
         let defaults = UserDefaults.standard
         recordTarget = defaults.string(forKey: "recordTarget") ?? "none"
         recordAutoLang = defaults.object(forKey: "recordAutoLang") as? Bool ?? true
+        recordHeardLang = defaults.string(forKey: "recordHeardLang") ?? "auto"
         recordKeepsAudio = defaults.object(forKey: "recordKeepsAudio") as? Bool ?? true
         listen.onSubtitle = { [weak self] src, dst in
             self?.liveSource = src
@@ -458,6 +459,7 @@ final class AppModel: ObservableObject {
         recorder.candidates = candidates
         recorder.target = recordTarget
         recorder.detectsLanguage = recordAutoLang
+        recorder.heardLanguage = recordHeardLang
         recorder.keepsAudio = recordKeepsAudio
         recorder.audioURL = store.micAudioURL(session.id)
         // Each recording hears its own voices; the ones heard in a meeting are forgotten.
@@ -473,6 +475,12 @@ final class AppModel: ObservableObject {
         recorder.onVoice = { [weak self] id, voice in
             self?.recordVoice(id, voice)
         }
+        recorder.onEdit = { [weak self] id in
+            self?.recordEdit(id)
+        }
+        recorder.onRewrite = { [weak self] in
+            self?.recordRewrite()
+        }
         recorder.start()
         refresh()
     }
@@ -481,7 +489,8 @@ final class AppModel: ObservableObject {
     func endRecording() {
         recorder.stop()
         guard let id = recordSessionID else { return }
-        recordSessionID = nil
+        // The session id is kept: a recording can still be corrected after it has ended, and
+        // the changes go into the same meeting.
         recorder.onLine = nil
         recorder.onTranslation = nil
         recorder.onVoice = nil
@@ -505,6 +514,23 @@ final class AppModel: ObservableObject {
     private func recordVoice(_ id: String, _ voice: Int?) {
         guard recordSessionID != nil, let voice else { return }
         store.setVoice(lineID: id, voice)
+    }
+
+    /// A sentence the user corrected: the record gets the new words.
+    private func recordEdit(_ id: String) {
+        guard let session = recordSessionID,
+              let line = recorder.lines.first(where: { $0.id == id }) else { return }
+        store.setSource(in: session, lineID: id, line.text)
+    }
+
+    /// The sentences were merged or split: the record is written out again, because the set of
+    /// lines is different now.
+    private func recordRewrite() {
+        guard let session = recordSessionID else { return }
+        store.replaceLines(in: session, recorder.lines.map {
+            TranscriptLine(id: $0.id, t: $0.t, speaker: "them", src: $0.text,
+                           dst: $0.translation, srcLang: $0.lang, dstLang: target, voice: $0.voice)
+        })
     }
     /// The menu (⌘R) and the panel switch: a meeting with lines is ended only after asking, with
     /// "继续记录" as the default so a stray Return keeps it going. An empty one just stops.
@@ -697,6 +723,10 @@ final class AppModel: ObservableObject {
     /// Detect the language instead of using one fixed model.
     @Published var recordAutoLang: Bool {
         didSet { UserDefaults.standard.set(recordAutoLang, forKey: "recordAutoLang") }
+    }
+    /// The language the recording is made in; "auto" detects it.
+    @Published var recordHeardLang: String {
+        didSet { UserDefaults.standard.set(recordHeardLang, forKey: "recordHeardLang") }
     }
     /// Keep the audio next to the transcript.
     @Published var recordKeepsAudio: Bool {
@@ -1056,6 +1086,18 @@ final class AppModel: ObservableObject {
 
     // MARK: Export
 
+    /// The recording being made, as a session, so it can be exported like any other meeting.
+    var recordSession: Session? {
+        guard let id = recordSessionID, let s = store.session(id), !s.lines.isEmpty else { return nil }
+        return s
+    }
+
+    /// Exports the recording; nothing happens when there is nothing to export yet.
+    func exportRecording(kind: String) {
+        guard let session = recordSession else { return }
+        export(session, kind: kind)
+    }
+
     func export(_ session: Session, kind: String) {
         if kind == "copy" {
             NSPasteboard.general.clearContents()
@@ -1286,6 +1328,53 @@ final class AppModel: ObservableObject {
             // Fills the recorder with sample lines and a summary, so the surface can be looked at
             // without a microphone.
             recorder.demo()
+        case "recordWords":
+            // The words of the sentence being heard, with the moment each was said.
+            let words = recorder.liveWords.map { "\($0.text)@\(String(format: "%.1f", $0.t))" }
+            debugLog("record: words \(words.count): \(words.joined(separator: " "))")
+        case "recordRuns":
+            // What the model gave for the last result: the runs and the time of each.
+            recorder.debugRuns()
+        case "recordPlay":
+            // recordPlay:<seconds>: plays the recording's own audio from that moment.
+            let t = Double(arg) ?? 0
+            recorder.play(from: t)
+            debugLog("record: play from \(t)")
+        case "recordEdit":
+            // recordEdit:<words>: corrects the first sentence of the recording, to check that
+            // the change reaches the meeting record.
+            let id = recorder.lines.first?.id ?? ""
+            recorder.edit(id, text: arg)
+            let stored = recordSession?.lines.first?.src ?? "-"
+            debugLog("record: edit \(id) → \(stored)")
+        case "recordMerge":
+            // recordMerge: joins the first two sentences of the recording.
+            guard recorder.lines.count >= 2 else { break }
+            recorder.merge(recorder.lines[0].id, with: recorder.lines[1].id)
+            debugLog("record: merged → \(recorder.lines.count) lines, store has \(recordSession?.lines.count ?? 0)")
+        case "recordSplit":
+            // recordSplit: cuts the first sentence of the recording in two.
+            guard let first = recorder.lines.first else { break }
+            recorder.split(first.id, at: max(1, Array(first.text).count / 2))
+            debugLog("record: split → \(recorder.lines.count) lines, store has \(recordSession?.lines.count ?? 0)")
+        case "recordExport":
+            // recordExport:<kind>:<path>: writes the recording out, to check the formats
+            // without the save panel.
+            let p = arg.split(separator: "|").map(String.init)
+            guard p.count == 2, let session = recordSession else { break }
+            let ok = writeExport(session, kind: p[0], to: URL(fileURLWithPath: p[1]))
+            debugLog("record: export \(p[0]) → \(ok ? "ok" : "failed") \(p[1])")
+        case "recordDisplay":
+            // recordDisplay:<original|translated|bilingual>: what the transcript shows.
+            recorder.display = RecordEngine.Display(rawValue: arg) ?? .bilingual
+            debugLog("record: display=\(recorder.display.rawValue)")
+        case "recordLang":
+            // recordLang:<code>: fixes the language the recording is made in, so a test does
+            // not have to wait for the detector to make up its mind.
+            recordHeardLang = arg.isEmpty ? "auto" : arg
+            recorder.heardLanguage = recordHeardLang
+            recorder.detectsLanguage = recordHeardLang == "auto"
+            debugLog("record: lang=\(recordHeardLang)")
         case "recordStart":
             // Starts a real recording, to check the microphone, the session and the audio file.
             startRecording()
@@ -1295,7 +1384,8 @@ final class AppModel: ObservableObject {
             debugLog("record: stopped session=\(store.liveID ?? "?") lines=\(recorder.lines.count)")
         case "recordState":
             debugLog("record: state=\(recorder.state) elapsed=\(Int(recorder.elapsed)) lines=\(recorder.lines.count) "
-                + "live=\(recorder.live.prefix(30)) lang=\(recorder.lang?.locale ?? "-") problem=\(recorder.problem ?? "-")")
+                + "live=\(recorder.live.prefix(30)) lang=\(recorder.lang?.locale ?? "-") problem=\(recorder.problem ?? "-") "
+                + "level=\(String(format: "%.3f", recorder.level)) words=\(recorder.liveWords.count)")
         case "recordVoices":
             // Who the recorder has heard: the number each voice is shown under.
             let voices = recorder.lines.filter { $0.person != nil }

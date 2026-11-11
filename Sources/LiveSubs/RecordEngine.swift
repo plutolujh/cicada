@@ -4,6 +4,20 @@ import Speech
 
 // MARK: - A recording
 
+/// One word of the sentence being heard right now, with the moment it was said.
+///
+/// The words arrive one by one, so the transcript can show the sentence as it is being spoken
+/// rather than all at once when it is finished.
+struct LiveWord: Identifiable, Equatable {
+    let id: Int
+    /// The word as it was heard.
+    var text: String
+    /// Seconds from the start of the recording.
+    var t: Double
+    /// How sure the model is about this word (0…1), when it says.
+    var confidence: Double?
+}
+
 /// One settled sentence: what was said, when it started, and in which language.
 struct RecordLine: Identifiable, Equatable {
     let id: String
@@ -17,6 +31,10 @@ struct RecordLine: Identifiable, Equatable {
     /// The number the voice is shown under: 人物 1, 人物 2… The numbers follow the order the
     /// voices were first heard, so a person keeps their number.
     var person: Int?
+    /// How long the sentence took, so playback knows where it ends.
+    var end: Double?
+    /// When each word of the sentence was said, so the words can be stepped through.
+    var words: [LiveWord] = []
 }
 
 /// A piece of the running summary: a heading and what was said under it.
@@ -70,6 +88,11 @@ final class RecordEngine: ObservableObject {
 
     /// The sentence being heard right now; it changes as the speaker continues.
     @Published private(set) var live = ""
+    /// The words of the sentence being heard, in the order they were said.
+    ///
+    /// This is what makes the transcript look like it is being written: the words show up as
+    /// they are spoken, before the sentence is finished.
+    @Published private(set) var liveWords: [LiveWord] = []
     /// The sentences that are settled.
     @Published private(set) var lines: [RecordLine] = []
     /// The summary, rebuilt as the recording goes on.
@@ -86,12 +109,26 @@ final class RecordEngine: ObservableObject {
     /// True while the summary is being rebuilt, so the panel can show it is working.
     @Published private(set) var summarizing = false
 
+    /// How the transcript shows each sentence: as it was said, translated, or both.
+    enum Display: String, CaseIterable, Equatable {
+        /// The words as they were heard.
+        case original
+        /// The translation on its own.
+        case translated
+        /// The words as they were heard, with the translation underneath.
+        case bilingual
+    }
+    /// What the transcript shows now.
+    @Published var display: Display = .bilingual
+
     /// The translation target; "none" leaves the sentences untranslated.
     var target = "none"
     /// Keep the audio next to the transcript.
     var keepsAudio = true
     /// Detect the language instead of using one fixed model.
     var detectsLanguage = true
+    /// The language to record in, when it is not detected; "auto" detects it.
+    var heardLanguage = "auto"
 
     // MARK: Wiring
 
@@ -103,6 +140,10 @@ final class RecordEngine: ObservableObject {
     var onTranslation: ((String, String) -> Void)?
     /// Called when a sentence's voice is known, so the record can be updated too.
     var onVoice: ((String, Int?) -> Void)?
+    /// Called when a sentence is edited, merged or split, so the record is updated too.
+    var onEdit: ((String) -> Void)?
+    /// Called when the sentences of the recording change, so the record is rewritten.
+    var onRewrite: (() -> Void)?
     /// The languages a model is installed for.
     var installed: Set<String> = []
     /// The languages worth detecting between.
@@ -170,6 +211,7 @@ final class RecordEngine: ObservableObject {
         state = .preparing
         problem = nil
         live = ""
+        liveWords = []
         lines = []
         topics = []
         elapsed = 0
@@ -193,7 +235,8 @@ final class RecordEngine: ObservableObject {
         // The detector needs at least two models to choose from; with fewer it would always
         // guess the same one, so the first language is used until more are installed.
         let pool = candidates.filter { installed.contains($0.locale) }
-        let first = pool.first ?? candidates.first ?? sourceLanguages[0]
+        let first = pool.first(where: { $0.locale == heardLanguage })
+            ?? pool.first ?? candidates.first ?? sourceLanguages[0]
         Task {
             await prepare(first)
             guard state == .preparing else { return }
@@ -223,9 +266,24 @@ final class RecordEngine: ObservableObject {
         }
         analyzer = nil
         transcriber = nil
+        // The sentence that was being spoken is kept: the person stopped talking in the middle
+        // of it, but what they said is not thrown away.
+        settleLive()
         closeRecorder()
         state = .idle
         debugLog("record: stopped lines=\(lines.count)")
+    }
+
+    /// Turns the sentence being heard into a settled one, when the recording ends in the middle
+    /// of it.
+    private func settleLive() {
+        let text = HeardText.clean(live.trimmingCharacters(in: .whitespacesAndNewlines))
+        guard text.contains(where: \.isLetter) else { return }
+        let start = liveWords.first?.t ?? elapsed
+        let end = liveWords.last?.t ?? elapsed
+        live = ""
+        liveWords = []
+        add(text, at: start, until: end)
     }
 
     // MARK: The model
@@ -237,8 +295,11 @@ final class RecordEngine: ObservableObject {
             problem = L("此 Mac 不支持本机语音识别")
             return
         }
+        // The audio time range is asked for: it gives each word its own moment, which is what
+        // lets the words show up one by one as they are spoken.
         let t = SpeechTranscriber(locale: Locale(identifier: lang.locale), transcriptionOptions: [],
-                                  reportingOptions: [.volatileResults, .fastResults], attributeOptions: [])
+                                  reportingOptions: [.volatileResults, .fastResults],
+                                  attributeOptions: [.audioTimeRange])
         if await AssetInventory.status(forModules: [t]) != .installed,
            let req = try? await AssetInventory.assetInstallationRequest(supporting: [t]) {
             try? await req.downloadAndInstall()
@@ -270,6 +331,7 @@ final class RecordEngine: ObservableObject {
         }
         oldTask?.cancel()
         live = ""
+        liveWords = []
         debugLog("record: switching model to \(lang.locale)")
         await prepare(lang)
     }
@@ -392,6 +454,9 @@ final class RecordEngine: ObservableObject {
     private func stopMic() {
         mic.inputNode.removeTap(onBus: 0)
         mic.stop()
+        // The engine is used again for the next recording; without a reset it keeps the old
+        // graph, and the second recording hears nothing at all.
+        mic.reset()
     }
 
     // MARK: The audio file
@@ -426,13 +491,25 @@ final class RecordEngine: ObservableObject {
             let first = clip.removeFirst()
             clipSeconds -= Double(first.frameLength) / first.format.sampleRate
         }
-        if let data = buffer.floatChannelData?[0] {
+        levelPeak = max(levelPeak, min(1, rms(of: buffer) * 12))
+    }
+
+    /// How loud a buffer is, whatever shape it is in: the analyzer's format is Int16, so the
+    /// samples are not always there as floats.
+    private func rms(of buffer: AVAudioPCMBuffer) -> Float {
+        let n = Int(buffer.frameLength)
+        guard n > 0 else { return 0 }
+        if let floats = buffer.floatChannelData?[0] {
             var sum: Float = 0
-            let n = Int(buffer.frameLength)
-            for i in 0..<n { sum += data[i] * data[i] }
-            let rms = n > 0 ? sqrt(sum / Float(n)) : 0
-            levelPeak = max(levelPeak, min(1, rms * 12))
+            for i in 0..<n { sum += floats[i] * floats[i] }
+            return sqrt(sum / Float(n))
         }
+        if let ints = buffer.int16ChannelData?[0] {
+            var sum: Float = 0
+            for i in 0..<n { let v = Float(ints[i]) / 32768; sum += v * v }
+            return sqrt(sum / Float(n))
+        }
+        return 0
     }
 
     /// Keeps the audio of the last minute, so a settled sentence can be given a voiceprint.
@@ -467,6 +544,7 @@ final class RecordEngine: ObservableObject {
     }
 
     private func tick() {
+        playbackTick()
         guard state == .recording else { return }
         elapsed = Date().timeIntervalSince(startedAt)
         level = levelPeak
@@ -485,24 +563,98 @@ final class RecordEngine: ObservableObject {
             guard result.isFinal else { return }
         }
         guard state == .recording else { return }
+        lastText = result.text
+        lastRuns = "\(result.isFinal ? "final" : "volatile") " + Self.describe(result.text)
+        let words = Self.words(of: result.text)
         var text = HeardText.clean(String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines))
         if result.isFinal {
             // A breath or a click is not a sentence: it would sit in the record as a line.
-            guard text.contains(where: \.isLetter) else { live = ""; return }
+            guard text.contains(where: \.isLetter) else { live = ""; liveWords = []; return }
             live = ""
-            add(text, at: CMTimeGetSeconds(result.range.start), until: CMTimeGetSeconds(result.range.end))
+            liveWords = []
+            add(text, at: CMTimeGetSeconds(result.range.start), until: CMTimeGetSeconds(result.range.end),
+                words: words)
         } else {
             live = text
+            liveWords = words
+        }
+    }
+
+    /// The last result the model gave, kept for the debug commands.
+    private var lastText = AttributedString()
+    /// How the last result looked, written down when it arrived.
+    private var lastRuns = ""
+
+    /// Shows what the model gave: the runs of the last result and the time of each.
+    func debugRuns() {
+        debugLog("record: runs \(lastRuns)")
+    }
+
+    /// What the model gave: the runs of a result and the time of each, for the debug commands.
+    nonisolated static func describe(_ text: AttributedString) -> String {
+        typealias Scope = AttributeScopes.SpeechAttributes
+        var out: [String] = []
+        for run in text.runs {
+            let piece = String(text[run.range].characters)
+            let range = run[Scope.TimeRangeAttribute.self]
+            let sure = run[Scope.ConfidenceAttribute.self]
+            out.append("[\(piece)|\(range.map { "\(CMTimeGetSeconds($0.start))-\(CMTimeGetSeconds($0.end))" } ?? "nil")|\(sure.map { String(format: "%.2f", $0) } ?? "nil")]")
+        }
+        return out.joined(separator: " ")
+    }
+
+    /// The words of a result, each with the moment it was said.
+    ///
+    /// While a sentence is still being spoken the model gives it as one run with the span it
+    /// covers, so the words in it are spread over that span: the text appears letter by letter
+    /// as it is said, and each letter has the moment it was said. When the sentence is finished
+    /// the model gives every word its own time, and those exact times are used instead.
+    nonisolated static func words(of text: AttributedString) -> [LiveWord] {
+        typealias Scope = AttributeScopes.SpeechAttributes
+        var out: [LiveWord] = []
+        for run in text.runs {
+            let range = run[Scope.TimeRangeAttribute.self]
+            let sure = run[Scope.ConfidenceAttribute.self]
+            let pieces = Self.pieces(of: String(text[run.range].characters))
+            guard !pieces.isEmpty else { continue }
+            guard let range else {
+                // No time at all: the words take the time of the word before them.
+                for piece in pieces {
+                    out.append(LiveWord(id: out.count, text: piece, t: out.last?.t ?? 0, confidence: sure))
+                }
+                continue
+            }
+            // The run covers the whole phrase; each word is given its share of it.
+            let start = CMTimeGetSeconds(range.start)
+            let span = max(0, CMTimeGetSeconds(range.end) - start)
+            let step = span / Double(pieces.count)
+            for (i, piece) in pieces.enumerated() {
+                out.append(LiveWord(id: out.count, text: piece, t: start + step * Double(i), confidence: sure))
+            }
+        }
+        return out
+    }
+
+    /// The words of a piece of text: spaces separate words in English, characters are the words
+    /// in Chinese.
+    nonisolated static func pieces(of text: String) -> [String] {
+        let hasSpaces = text.contains(" ")
+        return text.split(separator: " ", omittingEmptySubsequences: true).flatMap { piece -> [String] in
+            guard !hasSpaces else { return [String(piece)] }
+            // Without spaces the piece is one word; each character of it is shown on its own.
+            return piece.map { String($0) }
         }
     }
 
     /// A settled sentence: it goes into the transcript, and into the running summary.
-    private func add(_ text: String, at start: Double, until end: Double) {
+    private func add(_ text: String, at start: Double, until end: Double, words: [LiveWord] = []) {
         let code = modelLang?.code ?? "zh-CN"
         // The transcript shows when the sentence was started; the recorder's own clock is the
         // authority, but the model counts from the first buffer it was given.
         let t = start.isFinite && start >= 0 ? start : elapsed
-        var line = RecordLine(id: "r\(nextLineID)", t: t, text: text, translation: nil, lang: code, voice: nil, person: nil)
+        let until = end.isFinite && end > t ? end : nil
+        var line = RecordLine(id: "r\(nextLineID)", t: t, text: text, translation: nil, lang: code,
+                              voice: nil, person: nil, end: until, words: words)
         nextLineID += 1
         lines.append(line)
         heard.append(code)
@@ -546,6 +698,125 @@ final class RecordEngine: ObservableObject {
         debugLog("record: voice: \(lineID) → \(voice.map(String.init) ?? "none")")
         onVoice?(lineID, voice)
         return true
+    }
+
+    // MARK: The playback
+
+    /// Where the audio is being played from, in seconds; nil when nothing is playing.
+    @Published private(set) var playing: Double?
+    /// True while the audio is playing.
+    @Published private(set) var isPlaying = false
+
+    /// The player for the recording's own audio file.
+    private var player: AVAudioPlayer?
+    /// Stands between the player and the engine; the player wants a delegate that is an
+    /// NSObject, and the engine is not one.
+    private let playbackDelegate = PlaybackDelegate()
+
+    /// Plays the recording from a moment in it, so a sentence can be heard again.
+    ///
+    /// The audio is the one that was kept next to the transcript; if it was not kept, there is
+    /// nothing to play and the sentence is simply left as it is.
+    func play(from t: Double) {
+        guard let url = audioURL, FileManager.default.fileExists(atPath: url.path) else {
+            debugLog("record: play: no audio")
+            return
+        }
+        do {
+            if player == nil {
+                player = try AVAudioPlayer(contentsOf: url)
+                playbackDelegate.onFinish = { [weak self] in
+                    Task { @MainActor in
+                        self?.isPlaying = false
+                        self?.playing = nil
+                    }
+                }
+                player?.delegate = playbackDelegate
+            }
+            guard let player else { return }
+            player.currentTime = max(0, min(t, player.duration - 0.05))
+            player.play()
+            playing = player.currentTime
+            isPlaying = true
+            debugLog("record: play from \(Int(t))s")
+        } catch {
+            debugLog("record: play failed: \(error)")
+        }
+    }
+
+    /// Stops the playback.
+    func stopPlayback() {
+        player?.pause()
+        isPlaying = false
+        playing = nil
+    }
+
+    /// How far the playback has come, for the line that is being heard.
+    private func playbackTick() {
+        guard let player, player.isPlaying else {
+            if isPlaying {
+                isPlaying = false
+                playing = nil
+            }
+            return
+        }
+        playing = player.currentTime
+    }
+
+    // MARK: The editing
+
+    /// Changes the words of a sentence: what was heard can be corrected.
+    func edit(_ id: String, text: String) {
+        guard let i = lines.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != lines[i].text else { return }
+        lines[i].text = trimmed
+        debugLog("record: edit \(id)")
+        onEdit?(id)
+    }
+
+    /// Joins two sentences into one, the way a recording that was cut in half is put back
+    /// together.
+    func merge(_ id: String, with nextID: String) {
+        guard let i = lines.firstIndex(where: { $0.id == id }),
+              let j = lines.firstIndex(where: { $0.id == nextID }), j > i else { return }
+        // The two sentences are one now; the voice of the first one is kept, because it is the
+        // one that started.
+        lines[i].text = lines[i].text + " " + lines[j].text
+        if let t = lines[j].translation, !t.isEmpty {
+            lines[i].translation = [lines[i].translation, t].compactMap { $0 }.joined(separator: " ")
+        }
+        lines[i].end = lines[j].end ?? lines[i].end
+        lines.remove(at: j)
+        debugLog("record: merge \(id) + \(nextID)")
+        onRewrite?()
+    }
+
+    /// Cuts a sentence in two at a place in its text.
+    ///
+    /// The second half keeps the time of the word it starts at, so the transcript still shows
+    /// when it was said.
+    func split(_ id: String, at offset: Int) {
+        guard let i = lines.firstIndex(where: { $0.id == id }) else { return }
+        let text = lines[i].text
+        let chars = Array(text)
+        guard offset > 0, offset < chars.count else { return }
+        let head = String(chars[..<offset]).trimmingCharacters(in: .whitespaces)
+        let tail = String(chars[offset...]).trimmingCharacters(in: .whitespaces)
+        guard !head.isEmpty, !tail.isEmpty else { return }
+        // The second sentence starts where the cut is, so the two are still in order.
+        let gap = Double(offset) / Double(max(chars.count, 1))
+        let span = (lines[i].end ?? lines[i].t + 1) - lines[i].t
+        var second = RecordLine(id: "r\(nextLineID)", t: lines[i].t + span * gap, text: tail,
+                                 translation: nil, lang: lines[i].lang, voice: lines[i].voice,
+                                 person: lines[i].person, end: lines[i].end)
+        nextLineID += 1
+        lines[i].text = head
+        lines[i].end = second.t
+        lines[i].translation = nil
+        lines.insert(second, at: i + 1)
+        debugLog("record: split \(id) at \(offset)")
+        onRewrite?()
     }
 
     // MARK: The translation
@@ -686,7 +957,8 @@ final class RecordEngine: ObservableObject {
             (92, "但我觉得我是有。", "But I think I do have it.", 0, 1),
         ]
         lines = sample.enumerated().map { i, s in
-            RecordLine(id: "d\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN", voice: s.3, person: s.4)
+            RecordLine(id: "d\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN",
+                       voice: s.3, person: s.4, end: s.0 + 4)
         }
         topics = [
             RecordTopic(title: "人物身份确认",
@@ -699,9 +971,26 @@ final class RecordEngine: ObservableObject {
                         detail: "说话人3表达对 David 成长经历的好奇，提及 David 为深圳出生长大，并非苏州出身。",
                         points: []),
         ]
-        live = "所以我觉得……"
+        live = "所以我觉得"
+        liveWords = "所以我觉得".enumerated().map { i, c in
+            LiveWord(id: i, text: String(c), t: 146 + Double(i) * 0.2, confidence: nil)
+        }
         elapsed = 146
         lang = sourceLanguages.first { $0.code == "zh-CN" }
         debugLog("record: demo filled \(lines.count) lines")
+    }
+}
+
+// MARK: - The playback
+
+/// Tells the engine when the audio ran out.
+///
+/// The player wants a delegate, and a delegate wants an NSObject; the engine is not one, so
+/// this stands in for it.
+private final class PlaybackDelegate: NSObject, AVAudioPlayerDelegate {
+    var onFinish: (() -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onFinish?()
     }
 }

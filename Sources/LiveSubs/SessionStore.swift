@@ -159,6 +159,15 @@ final class SessionStore: ObservableObject {
         scheduleSave(id)
     }
 
+    /// The same, but for a session that is not the live one: a recording can be corrected
+    /// after it has ended.
+    func setTranslation(in sessionID: String, lineID: String, _ text: String) {
+        guard let i = index(sessionID),
+              let j = sessions[i].lines.firstIndex(where: { $0.id == lineID }) else { return }
+        sessions[i].lines[j].dst = text
+        scheduleSave(sessionID)
+    }
+
     /// A line joined with the one after it (`HeardText.join`).
     func setSource(lineID: String, _ text: String) {
         guard let id = liveID, let i = index(id),
@@ -167,11 +176,38 @@ final class SessionStore: ObservableObject {
         scheduleSave(id)
     }
 
+    /// The same, but for a session that is not the live one: a recording can be corrected
+    /// after it has ended.
+    func setSource(in sessionID: String, lineID: String, _ text: String) {
+        guard let i = index(sessionID),
+              let j = sessions[i].lines.firstIndex(where: { $0.id == lineID }) else { return }
+        sessions[i].lines[j].src = text
+        scheduleSave(sessionID)
+    }
+
     func setVoice(lineID: String, _ voice: Int) {
         guard let id = liveID, let i = index(id),
               let j = sessions[i].lines.firstIndex(where: { $0.id == lineID }) else { return }
         sessions[i].lines[j].voice = voice
         scheduleSave(id)
+    }
+
+    /// Replaces the lines of the live session, for when the user merged or split them.
+    ///
+    /// The lines are written out one by one, so a line that has no place in the new set is
+    /// removed rather than left behind.
+    func replaceLines(_ lines: [TranscriptLine]) {
+        guard let id = liveID, let i = index(id) else { return }
+        sessions[i].lines = lines
+        scheduleSave(id)
+    }
+
+    /// The same, but for a session that is not the live one: a recording can be corrected
+    /// after it has ended.
+    func replaceLines(in sessionID: String, _ lines: [TranscriptLine]) {
+        guard let i = index(sessionID) else { return }
+        sessions[i].lines = lines
+        scheduleSave(sessionID)
     }
 
     /// The user names a voice. nil drops their name (Ling's guess shows again); "" keeps 说话人 N.

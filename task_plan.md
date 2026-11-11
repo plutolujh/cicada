@@ -141,11 +141,46 @@
 6. **存进会议记录**：录音的行 `speaker: "them"`（录的是别人，不是你），
    声纹号存进 `TranscriptLine.voice`，记录窗口里也能分人。
 
+## 豆包路线图 Phase 1（`2026-11-05-doubao-record-comparison.md`）— ✅
+
+按对比文档第 3 期的 Phase 1 逐条做，五项都落地了：
+
+1. **1.1 逐字流式** ✅ — `RecordEngine.liveWords`（`[LiveWord]`）拿 `SpeechTranscriber`
+   的 `attributeOptions: [.audioTimeRange]`，volatile 结果给的是整句一个 run，
+   所以 `words(of:)` 把 run 的时间跨度均分给每个字；final 结果给的是逐字 run，
+   各自带准确时间，直接换上去。界面用 `AttributedString` 渲染，最新的字是橙色。
+   - 注意：属性在 **run** 上（`run[Scope.TimeRangeAttribute.self]`），
+     `run.scope` / `text.scope.range(for:)` 都不存在。
+2. **1.2 句子编辑 / 合并 / 拆分** ✅ — `RecordEngine.edit/merge/split` 改 `lines`，
+   `AppModel.recordEdit`/`recordRewrite` 同步进 `SessionStore`。
+   `SessionStore` 多了 `setSource(in:)` / `setTranslation(in:)` / `replaceLines(in:)`，
+   录完的录音改完也写回同一个会议（`recordSessionID` 不再在 `endRecording` 里清空）。
+3. **1.3 音频回放** ✅ — `RecordEngine.play(from:)` + `AVAudioPlayer`，
+   引擎不是 `NSObject`，所以用一个私有的 `PlaybackDelegate` 代理。
+4. **1.4 双语三态** ✅ — `RecordEngine.Display`（original / translated / bilingual），
+   顶部三选一；没有译文目标时选择器置灰。
+5. **1.5 导出** ✅ — `AppModel.exportRecording(kind:)` 复用 `model.export(session, kind:)`，
+   Markdown / Word / SRT 三种，录音页右上角一个菜单。
+
+顺手修掉的 bug：
+
+- `mic.reset()`：录完不 reset，**同一进程里的第二段录音全聋**。
+- 电平表恒为 0：analyzer 的格式是 Int16，`floatChannelData` 是 nil，
+  改成 `rms(of:)` 两种格式都算。
+- 停录时正在说的那句丢了：新增 `settleLive()` 把它留成一行。
+- 录完再改句子进不了记录：`onEdit`/`onRewrite` 之前在 `endRecording` 里被摘掉。
+- 固定语种：`RecordEngine.heardLanguage` + `AppModel.recordHeardLang`
+  （UserDefaults `recordHeardLang`，默认 `auto`），不用等语言探测。
+
 ## 待办 / 已知缺口
 
 - **翻译语言没有选择器**：`recordTarget` 只能在「不翻译」和「我的语言」之间切，
   没有明确的语言列表可选。
+- **固定语种没有界面**：`recordHeardLang` 只能靠 debug 命令 `recordLang:<code>` 设，
+  还没有选择器。
 - **真人验收**：麦克风授权、真人音色、BlackHole 安装仍需一个人来测。
   合成语音经喇叭再被麦克风收进来，声纹会被「喇叭染色」盖过，
   两个人的声音会变得像（实测 0.736，高于合并门槛 0.5），
   所以真人对话的验收还是要人来。
+- **断句**：zh-CN 模型在本机不把两句话切成两行（两句 → 一行），
+  断句行为要真人说话才能判。

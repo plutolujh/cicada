@@ -193,3 +193,83 @@
 但把合成语音**经喇叭放出来再被麦克风收进去**，两个人的相似度会涨到 0.736，
 高于合并门槛 0.5，于是被当成同一个人。喇叭染色盖过了人声本身的差别——
 这是测试环境的限制，不是代码的错；真人对话要人来验收。
+
+## 7. 豆包式逐字流式：SpeechAnalyzer 的时间属性怎么拿
+
+### 属性在 run 上，不在 text 上
+
+`SpeechTranscriber` 加上 `attributeOptions: [.audioTimeRange]` 之后，
+时间范围挂在 **run** 上：
+
+```swift
+typealias Scope = AttributeScopes.SpeechAttributes
+for run in text.runs {
+    let range = run[Scope.TimeRangeAttribute.self]   // CMTimeRange?
+    let sure  = run[Scope.ConfidenceAttribute.self]   // Double?
+    let piece = String(text[run.range].characters)
+}
+```
+
+`run.scope` 和 `text.scope.range(for:)` **都不存在**——写出来编译不过。
+
+### volatile 给整句一个 run，final 才逐字给
+
+这是最关键的一条，一开始以为是 bug：
+
+| 结果 | runs | 含义 |
+|---|---|---|
+| volatile（还在说） | `[挺有意思的我们以讨论一下\|0.0-2.989\|nil]` | 整句一个 run，只有整句的跨度 |
+| final（说完了） | `[有\|0.24-0.54\|nil] [没\|0.54-0.66\|nil] …` | 每个字一个 run，各带准确时间 |
+
+所以逐字流式要两段配合：
+
+- 还在说的时候，把 run 的时间跨度**均分**给每个字（`step = span / count`），
+  文字照样一个字一个字冒出来，每个字也有大致的时间；
+- 句子说完了，final 结果给的是逐字 run，各自带准确时间，直接换上去。
+
+实测：`record: words 13: 你@0.0 有@0.2 意@0.5 思@0.7 …`（live），
+final 的 runs 是 `[有|0.24-0.54] [没|0.54-0.66] …`。
+
+### 中文没有空格，所以中文按字切
+
+`pieces(of:)`：文本里有空格就按空格切（英文保留整词），没有空格就按字切（中文）。
+这样中文才能一个字一个字出现。
+
+### `attributeOptions` 不是「录不到」的元凶
+
+一开始怀疑是 `.audioTimeRange` 让识别器罢工，去掉它重录——**行为一样**（0 行）。
+真正的原因是麦克风引擎被复用后没有 `reset()`：同一进程里的第二段录音全聋。
+现在 `stopMic()` 里 `mic.stop()` 之后补了 `mic.reset()`。
+
+### 电平表恒为 0
+
+analyzer 给的格式是 Int16 16 kHz，`buffer.floatChannelData` 是 **nil**，
+所以 RMS 那一段根本没跑。改成 `rms(of:)`，Int16 和 Float32 都算。
+
+### 停录时正在说的那句会丢
+
+`stop()` 把 analyzer `cancelAndFinishNow()` 掉，还在说的半句就跟着没了。
+现在 `stop()` 里先 `settleLive()`：把 live 文本和它的词时间留成一行，再收尾。
+
+### 录完再改句子，改动进不了会议记录
+
+两处：`endRecording()` 把 `recordSessionID` 清了、又把 `onEdit`/`onRewrite` 摘了。
+现在 `recordSessionID` 保留（开始新录音时才换），`onEdit`/`onRewrite` 也保留，
+`SessionStore` 补了带 session id 的 `setSource(in:)` / `setTranslation(in:)` /
+`replaceLines(in:)`，改完照样写回同一个会议。
+
+### 麦克风只能听清系统默认输入
+
+`AudioDevices.pinInput` 指定「MacBook Air麦克风」时 tap 收到的是静音，
+用系统默认输入就正常。`mictest`（单独的小程序）量到：安静时 peak 0.003，
+放声音时 peak 0.074——麦克风本身是好的。
+
+### 语言探测太慢
+
+本机从 en-US 换到 zh-CN 要 10–20 秒（要积累足够的字符和置信度才敢切）。
+测试时用 `recordLang:zh-CN` 直接固定语种，不用等。
+
+### 英文模型不吃中文
+
+zh-CN 模型下两句中文还是被并成一行（断句要真人说话才判得准），
+en-US 模型则完全听不出中文。
