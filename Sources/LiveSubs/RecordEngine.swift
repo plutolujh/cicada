@@ -14,6 +14,9 @@ struct RecordLine: Identifiable, Equatable {
     var lang: String
     /// Which voice said it, when the voiceprints can tell them apart.
     var voice: Int?
+    /// The number the voice is shown under: 人物 1, 人物 2… The numbers follow the order the
+    /// voices were first heard, so a person keeps their number.
+    var person: Int?
 }
 
 /// A piece of the running summary: a heading and what was said under it.
@@ -23,6 +26,25 @@ struct RecordTopic: Identifiable, Equatable {
     var detail: String
     /// The lines this topic covers, so the summary can be rebuilt from them.
     var points: [String]
+}
+
+/// The numbers the people of a recording are shown under: 人物 1, 人物 2, 人物 3…
+///
+/// The numbers follow the order the voices were first heard, so a person keeps their number
+/// for the whole recording, however many lines they say.
+struct PersonNumbers {
+    private var numbers: [Int: Int] = [:]
+
+    /// The number of a voice; the first voice heard is 1.
+    mutating func number(for voice: Int) -> Int {
+        if let n = numbers[voice] { return n }
+        let n = numbers.count + 1
+        numbers[voice] = n
+        return n
+    }
+
+    /// How many people have been heard.
+    var count: Int { numbers.count }
 }
 
 // MARK: - The engine
@@ -79,6 +101,8 @@ final class RecordEngine: ObservableObject {
     var onLine: ((RecordLine) -> Void)?
     /// Called when a sentence's translation arrives, so the record can be updated too.
     var onTranslation: ((String, String) -> Void)?
+    /// Called when a sentence's voice is known, so the record can be updated too.
+    var onVoice: ((String, Int?) -> Void)?
     /// The languages a model is installed for.
     var installed: Set<String> = []
     /// The languages worth detecting between.
@@ -87,6 +111,9 @@ final class RecordEngine: ObservableObject {
     var audioURL: URL?
     /// The microphone to record from; nil is the system default.
     var inputDevice: OutputDevice?
+    /// Tells the voices apart: each settled sentence's audio becomes a voiceprint, and the
+    /// voiceprint says who said it.
+    var tagger: SpeakerTagger?
 
     // MARK: Internals
 
@@ -113,6 +140,18 @@ final class RecordEngine: ObservableObject {
     private var clip: [AVAudioPCMBuffer] = []
     private var clipSeconds = 0.0
     private let clipLimit = 12.0
+    /// The audio of the last minute or so, 16 kHz mono, on the analyzer's clock: the voiceprint
+    /// of a settled sentence is cut out of it.
+    private var voiceAudio: [Float] = []
+    private var voiceStart = 0.0
+    private let voiceLimit = 90.0
+    /// Seconds of audio given to the analyzer: its clock, the one a result's time range is on.
+    private var fed = 0.0
+    /// Its own converter: the analyzer's converter is stateful and cannot be reused for another format.
+    private let voiceConverter = PCMConverter()
+    private let voiceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+    /// Voice id → the number the person is shown under (人物 1, 人物 2…).
+    private var persons = PersonNumbers()
     /// When the language was last looked at, and whether a look is already running.
     private var lastDetectionAt = Date.distantPast
     private var detecting = false
@@ -137,6 +176,10 @@ final class RecordEngine: ObservableObject {
         heard = []
         clip = []
         clipSeconds = 0
+        voiceAudio = []
+        voiceStart = 0
+        fed = 0
+        persons = PersonNumbers()
         nextLineID = 0
         generation += 1
         startedAt = Date()
@@ -331,6 +374,9 @@ final class RecordEngine: ObservableObject {
                 guard let c = conv.convert(buf, to: format) else { return }
                 self.record(c)
                 self.keep(c)
+                // The analyzer is fed from here, so this is where its clock moves.
+                self.keepVoice(c)
+                self.fed += Double(c.frameLength) / c.format.sampleRate
                 self.input?.yield(AnalyzerInput(buffer: c))
             }
         }
@@ -389,6 +435,28 @@ final class RecordEngine: ObservableObject {
         }
     }
 
+    /// Keeps the audio of the last minute, so a settled sentence can be given a voiceprint.
+    ///
+    /// The samples are placed on the analyzer's clock, the one a result's time range is on: the
+    /// tap is what feeds the analyzer, so the two are the same sound at the same time.
+    private func keepVoice(_ buffer: AVAudioPCMBuffer) {
+        guard let b = voiceConverter.convert(buffer, to: voiceFormat), let d = b.floatChannelData else { return }
+        if voiceAudio.isEmpty { voiceStart = fed }
+        voiceAudio.append(contentsOf: UnsafeBufferPointer(start: d[0], count: Int(b.frameLength)))
+        let over = voiceAudio.count - Int(voiceLimit * 16000)
+        if over > 16000 {
+            voiceAudio.removeFirst(over)
+            voiceStart += Double(over) / 16000
+        }
+    }
+
+    /// 16 kHz mono audio between two analyzer-clock times, or nil when it is no longer kept.
+    private func voiceSamples(from start: Double, to end: Double) -> [Float]? {
+        let a = Int(((start - voiceStart) * 16000).rounded()), b = Int(((end - voiceStart) * 16000).rounded())
+        guard a >= 0, b > a, b <= voiceAudio.count + 1600 else { return nil }
+        return Array(voiceAudio[a..<min(b, voiceAudio.count, a + Int(Voiceprints.maxSeconds * 16000))])
+    }
+
     // MARK: The clock and the meter
 
     private func startTick() {
@@ -422,25 +490,62 @@ final class RecordEngine: ObservableObject {
             // A breath or a click is not a sentence: it would sit in the record as a line.
             guard text.contains(where: \.isLetter) else { live = ""; return }
             live = ""
-            add(text, at: CMTimeGetSeconds(result.range.start))
+            add(text, at: CMTimeGetSeconds(result.range.start), until: CMTimeGetSeconds(result.range.end))
         } else {
             live = text
         }
     }
 
     /// A settled sentence: it goes into the transcript, and into the running summary.
-    private func add(_ text: String, at start: Double) {
+    private func add(_ text: String, at start: Double, until end: Double) {
         let code = modelLang?.code ?? "zh-CN"
         // The transcript shows when the sentence was started; the recorder's own clock is the
         // authority, but the model counts from the first buffer it was given.
         let t = start.isFinite && start >= 0 ? start : elapsed
-        let line = RecordLine(id: "r\(nextLineID)", t: t, text: text, translation: nil, lang: code, voice: nil)
+        var line = RecordLine(id: "r\(nextLineID)", t: t, text: text, translation: nil, lang: code, voice: nil, person: nil)
         nextLineID += 1
         lines.append(line)
         heard.append(code)
         onLine?(line)
         debugLog("record: line \(line.id) t=\(Int(line.t)) \(text.prefix(40))")
         translate(line)
+        tag(line, from: start, to: end)
+    }
+
+    // MARK: The voices
+
+    /// Who said this sentence: the audio of the sentence becomes a voiceprint, and the
+    /// voiceprint is matched against the ones heard so far.
+    ///
+    /// The voice comes back later, so the line is updated when it does. A sentence too short to
+    /// have a voiceprint, or one whose voice is not like any heard so far, keeps no voice.
+    private func tag(_ line: RecordLine, from start: Double, to end: Double) {
+        guard let tagger else { return }
+        // A word or two is not enough to tell voices apart; the model needs half a second.
+        guard line.text.filter(\.isLetter).count >= 2 else { return }
+        guard start.isFinite, end.isFinite, end > start else { return }
+        guard let samples = voiceSamples(from: start, to: end) else {
+            debugLog("record: voice: no audio for \(line.id)")
+            return
+        }
+        debugLog("record: voice: \(line.id) \(Double(samples.count) / 16000)s")
+        tagger.tag(lineID: line.id, samples: samples)
+    }
+
+    /// The voice of a line, once the voiceprint has been matched.
+    ///
+    /// True when the line is one of the recorder's: the caller then leaves it alone, so the
+    /// recording and the meeting record are written to once.
+    @discardableResult
+    func setVoice(_ voice: Int?, lineID: String) -> Bool {
+        guard let i = lines.firstIndex(where: { $0.id == lineID }) else { return false }
+        guard lines[i].voice != voice else { return true }
+        lines[i].voice = voice
+        // The first voice heard is 人物 1, the next 人物 2; the numbers never move.
+        if let voice { lines[i].person = persons.number(for: voice) }
+        debugLog("record: voice: \(lineID) → \(voice.map(String.init) ?? "none")")
+        onVoice?(lineID, voice)
+        return true
     }
 
     // MARK: The translation
@@ -508,11 +613,17 @@ final class RecordEngine: ObservableObject {
             lastSummaryLineCount = lines.count
         }
 
-        let transcript = lines.map { "[\(Self.clock($0.t))] \($0.text)" }.joined(separator: "\n")
+        // The person who said each line is named when the voice is known, so the summary can
+        // say who said what.
+        let transcript = lines.map { l in
+            let who = l.person.map { "人物 \($0): " } ?? ""
+            return "[\(Self.clock(l.t))] \(who)\(l.text)"
+        }.joined(separator: "\n")
         let language = TranslationService.englishName(heard.first ?? "zh-CN")
         let prompt = """
         You summarize a recording that is still running.
         Write the summary in \(language).
+        The transcript names the speakers as 人物 1, 人物 2…; say who said what when it matters.
         Output JSON only: {"topics":[{"title":"...","detail":"...","points":["..."]}]}
         Use at most 6 topics. Each title is a short heading (a few words). Each detail is one or two
         sentences about what was said under it. Each point is one short line of what was actually
@@ -566,15 +677,16 @@ final class RecordEngine: ObservableObject {
     /// Fills the recorder with sample lines and a summary, so the surface can be looked at
     /// without a microphone (debug).
     func demo() {
-        let sample: [(Double, String, String?)] = [
-            (15, "你觉得你自己的欲望是什么？", "What do you think your own desire is?"),
-            (21, "这是个好问题。", "That's a good question."),
-            (41, "你享受战斗吗？我享受那种拼尽全力的厮杀。", "Do you enjoy a fight? I enjoy battling with everything I have."),
-            (63, "我觉得以前我不是一个特别有血性的人，还是那句话，就是你可能拥有的比较多，没有需要去拼搏、厮杀去获取。", "I don't think I used to be a very driven person. Put simply, you may already have more than you need, with no need to fight or strive to get it."),
-            (92, "但我觉得我是有。", "But I think I do have it."),
+        // The voices are given too, so the people can be seen on the surface without a microphone.
+        let sample: [(Double, String, String?, Int, Int)] = [
+            (15, "你觉得你自己的欲望是什么？", "What do you think your own desire is?", 0, 1),
+            (21, "这是个好问题。", "That's a good question.", 1, 2),
+            (41, "你享受战斗吗？我享受那种拼尽全力的厮杀。", "Do you enjoy a fight? I enjoy battling with everything I have.", 0, 1),
+            (63, "我觉得以前我不是一个特别有血性的人，还是那句话，就是你可能拥有的比较多，没有需要去拼搏、厮杀去获取。", "I don't think I used to be a very driven person. Put simply, you may already have more than you need, with no need to fight or strive to get it.", 1, 2),
+            (92, "但我觉得我是有。", "But I think I do have it.", 0, 1),
         ]
         lines = sample.enumerated().map { i, s in
-            RecordLine(id: "d\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN", voice: nil)
+            RecordLine(id: "d\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN", voice: s.3, person: s.4)
         }
         topics = [
             RecordTopic(title: "人物身份确认",

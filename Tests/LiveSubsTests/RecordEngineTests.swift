@@ -40,4 +40,13 @@ import Testing
         #expect(RecordEngine.clock(146) == "02:26")
         #expect(RecordEngine.clock(3600) == "60:00")
     }
+
+    @Test func peopleAreNumberedInTheOrderTheyAreHeard() {
+        var p = PersonNumbers()
+        #expect(p.number(for: 0) == 1)
+        #expect(p.number(for: 3) == 2)      // the ids are not in order, the voices are
+        #expect(p.number(for: 0) == 1)      // the same voice keeps its number
+        #expect(p.number(for: 7) == 3)
+        #expect(p.count == 3)
+    }
 }

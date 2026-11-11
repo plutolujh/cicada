@@ -158,3 +158,38 @@
   `silencedetect` 的静音段与 `playto` 播片段的时刻对得上（说明录的是真声音）
 - 英文界面（`AppleLanguages=en`）OCR 核对：New recording / Auto-detect /
   Translate to... / Keep audio / Stop / Live summary 全部走翻译
+
+## 6. 录音里分人（人物1 / 人物2）
+
+### 怎么留住每句话的声音
+
+转写结果的时间范围（`result.range`）在 **analyzer 的时钟**上，不是录音的墙上时钟。
+录音的麦克风 tap 正是喂 analyzer 的地方，所以只要照着喂进去的秒数计数
+（`fed`），两边的时钟就是同一件事：
+
+- `RecordEngine.keepVoice(c)` 留 16 kHz 单声道，`voiceStart` 记它在 `fed` 上的位置
+- `voiceSamples(from:to:)` 按 analyzer 时间切出某一句自己的那段声音
+- 留 90 秒，够覆盖一句话；`Voiceprints.maxSeconds` 再把超长的截到 20 秒
+
+（和 `AudioRouter.voiceSamples` 是同一套做法，之前听会议时已经这么干过。）
+
+### 一个会崩的坑
+
+`VoiceClusterer` 给的声纹 id 是 **0 起的**（`sums.count - 1`），
+而 `SpeakerColor.ink(n)` 是 `inks[(n - 1) % inks.count]`——传 0 会取 `inks[-1]` 崩掉。
+显示用的号单独算：`PersonNumbers` 把声纹 id 映射成人物 1、2、3…（按听到的先后），
+界面和颜色都用这个号。
+
+### 声纹模型本身分得清，喇叭会把两个人说得像
+
+用 `voiceCompare` / `voiceFiles` 两个调试命令量过（都走生产那条路：模型 → 声纹 → 聚类）：
+
+| 比较 | 相似度 | 结论 |
+|---|---|---|
+| Eddy vs Grandma（干净文件） | 0.274 | 不同人 ✓ |
+| Eddy vs Grandma（干净文件） | 0.658 | 同一个人 ✓ |
+| 干净文件走聚类 | Eddy→0, Grandma→1, Eddy→0, Grandma→1 | 分对 ✓ |
+
+但把合成语音**经喇叭放出来再被麦克风收进去**，两个人的相似度会涨到 0.736，
+高于合并门槛 0.5，于是被当成同一个人。喇叭染色盖过了人声本身的差别——
+这是测试环境的限制，不是代码的错；真人对话要人来验收。

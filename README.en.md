@@ -58,7 +58,7 @@ Every session saves its bilingual transcript, notes, and audio recording on your
 
 ### Recording and transcription
 
-The main window has a "录音" surface: talk to the microphone and the left column writes down what you said, line by line, while the right column keeps a summary going. The language is detected for you, so there is nothing to choose first, and switching languages mid-sentence no longer loses the sentence. Each line can be translated into a language you read as it arrives. Recognition runs entirely on this Mac, so the audio is never uploaded; only translation and the summary use your AI service. The recording and the transcript stay on the Mac together, like a meeting record, and can be reopened and exported.
+The main window has a "录音" surface: talk to the microphone and the left column writes down what you said, line by line, while the right column keeps a summary going. The language is detected for you, so there is nothing to choose first, and switching languages mid-sentence no longer loses the sentence. Each line can be translated into a language you read as it arrives. Several people talking are told apart: every line is marked Person 1, Person 2, and the label changes when the voice does, so the summary can say who said what. Recognition runs entirely on this Mac, so the audio is never uploaded; only translation and the summary use your AI service. The recording and the transcript stay on the Mac together, like a meeting record, and can be reopened and exported.
 
 ## Privacy & Permissions
 

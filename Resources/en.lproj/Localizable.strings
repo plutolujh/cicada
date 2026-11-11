@@ -709,6 +709,7 @@
 
 /* SpeakerID */
 "说话人 %lld" = "Speaker %lld";
+"人物 %lld" = "Person %lld";
 "没认出是谁：太短，或和已知的声音都不像" = "Not recognised: too short, or unlike the known voices";
 "实验" = "Beta";
 "关掉说话人识别，记录里的名字一起收起" = "Turn off speaker identification; the names in your records are hidden too";

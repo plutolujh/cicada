@@ -166,6 +166,14 @@ struct RecordView: View {
                 .frame(width: 40, alignment: .leading)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
+                // The voice is named where it changes, the way a chat shows who is talking.
+                if starts.contains(line.id), let person = line.person {
+                    HStack(spacing: 5) {
+                        Circle().fill(SpeakerColor.ink(person)).frame(width: 6, height: 6)
+                        Text(L("人物 \(person)")).font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(SpeakerColor.ink(person))
+                    }
+                }
                 Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                 if let t = line.translation, !t.isEmpty {
@@ -175,6 +183,17 @@ struct RecordView: View {
             }
             Spacer(minLength: 0)
         }
+    }
+
+    /// The lines where the voice changes: the name is shown there only.
+    private var starts: Set<String> {
+        var out: Set<String> = [], last: Int??
+        for l in engine.lines {
+            let key = l.person
+            if key != last { out.insert(l.id) }
+            last = key
+        }
+        return out
     }
 
     // MARK: Right — the running summary

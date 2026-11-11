@@ -1,3 +1,4 @@
+import Accelerate
 import AppKit
 import AVFoundation
 import Carbon.HIToolbox
@@ -129,7 +130,9 @@ final class AppModel: ObservableObject {
         listen.onFinal = { [weak self] seg, duration in self?.recordHeard(seg, duration: duration) }
         speakers.onVoice = { [weak self] line, voice in
             guard let self else { return }
-            self.store.setVoice(lineID: line, voice)
+            // A recorded sentence is shown with the voice it turned out to have; the recorder
+            // keeps its own copy of the sentence, and writes the voice into the record itself.
+            if !self.recorder.setVoice(voice, lineID: line) { self.store.setVoice(lineID: line, voice) }
             if let id = self.store.liveID { self.speakerNamer.guess(id) }
         }
         speakerSetting = settings.$speakerVoices.sink { [weak self] on in
@@ -457,12 +460,18 @@ final class AppModel: ObservableObject {
         recorder.detectsLanguage = recordAutoLang
         recorder.keepsAudio = recordKeepsAudio
         recorder.audioURL = store.micAudioURL(session.id)
+        // Each recording hears its own voices; the ones heard in a meeting are forgotten.
+        speakers.reset()
+        recorder.tagger = speakers
         recordSessionID = session.id
         recorder.onLine = { [weak self] line in
             self?.appendRecorded(line)
         }
         recorder.onTranslation = { [weak self] id, text in
             self?.store.setTranslation(lineID: id, text)
+        }
+        recorder.onVoice = { [weak self] id, voice in
+            self?.recordVoice(id, voice)
         }
         recorder.start()
         refresh()
@@ -475,6 +484,7 @@ final class AppModel: ObservableObject {
         recordSessionID = nil
         recorder.onLine = nil
         recorder.onTranslation = nil
+        recorder.onVoice = nil
         // The recorder owns its own audio file and rewraps it into .m4a when it closes; the
         // store is not asked to do it again, or the two would race and the second one would
         // take the finished file away.
@@ -486,10 +496,16 @@ final class AppModel: ObservableObject {
     /// and searched like a meeting.
     private func appendRecorded(_ line: RecordLine) {
         guard recordSessionID != nil else { return }
-        store.append(TranscriptLine(id: line.id, t: line.t, speaker: "me", src: line.text,
+        store.append(TranscriptLine(id: line.id, t: line.t, speaker: "them", src: line.text,
                                     dst: line.translation, srcLang: line.lang, dstLang: target))
     }
 
+    /// Whose voice a recorded sentence turned out to be: it goes into the meeting record, so the
+    /// people are told apart there too.
+    private func recordVoice(_ id: String, _ voice: Int?) {
+        guard recordSessionID != nil, let voice else { return }
+        store.setVoice(lineID: id, voice)
+    }
     /// The menu (⌘R) and the panel switch: a meeting with lines is ended only after asking, with
     /// "继续记录" as the default so a stray Return keeps it going. An empty one just stops.
     func requestStop() {
@@ -1280,6 +1296,44 @@ final class AppModel: ObservableObject {
         case "recordState":
             debugLog("record: state=\(recorder.state) elapsed=\(Int(recorder.elapsed)) lines=\(recorder.lines.count) "
                 + "live=\(recorder.live.prefix(30)) lang=\(recorder.lang?.locale ?? "-") problem=\(recorder.problem ?? "-")")
+        case "recordVoices":
+            // Who the recorder has heard: the number each voice is shown under.
+            let voices = recorder.lines.filter { $0.person != nil }
+                .map { "\($0.id)=person\($0.person ?? 0)/voice\($0.voice ?? -1)" }
+            debugLog("record: voices lines=\(voices.count): \(voices.joined(separator: " "))")
+        case "voiceCompare":
+            // voiceCompare:<file a>|<file b>: how alike two voices are to the voiceprint model.
+            // The same voice is about 0.7 and up, different people under 0.5.
+            let files = arg.split(separator: "|").map(String.init)
+            guard files.count == 2 else { break }
+            Task {
+                guard let v = try? Voiceprints.load() else { debugLog("voice: model failed to load"); return }
+                let embs = files.map { f -> [Float]? in
+                    guard let s = Voiceprints.samples(of: URL(fileURLWithPath: f)) else { return nil }
+                    return v.embed(s)
+                }
+                guard let a = embs[0], let b = embs[1] else { debugLog("voice: no voiceprint"); return }
+                var dot: Float = 0
+                vDSP_dotpr(a, 1, b, 1, &dot, vDSP_Length(a.count))
+                debugLog(String(format: "voice: similarity %.3f", dot))
+            }
+        case "voiceFiles":
+            // voiceFiles:<file>|<file>…: the voices of several clips, put through the model and
+            // the clusterer exactly as a recording does, so the thresholds can be checked.
+            let files = arg.split(separator: "|").map(String.init)
+            guard files.count >= 2 else { break }
+            Task {
+                guard let v = try? Voiceprints.load() else { debugLog("voice: model failed to load"); return }
+                var clusterer = VoiceClusterer()
+                for f in files {
+                    guard let s = Voiceprints.samples(of: URL(fileURLWithPath: f)),
+                          let e = v.embed(s) else { debugLog("voice: no voiceprint for \(f)"); continue }
+                    let seconds = Double(s.count) / 16000
+                    let voice = clusterer.label(e, seconds: seconds)
+                    debugLog(String(format: "voice: %@ %.1fs → voice %@", (f as NSString).lastPathComponent,
+                                    seconds, voice.map(String.init) ?? "none"))
+                }
+            }
         case "recordMic":
             // The microphone the recording takes from; empty is the system default.
             recorder.inputDevice = arg.isEmpty ? nil
