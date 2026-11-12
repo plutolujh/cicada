@@ -38,6 +38,9 @@ final class AppModel: ObservableObject {
     @Published var voicePickerOpen = false
 
     @Published var running = false
+    /// The listening is on hold: the tap is still open, but nothing said while paused is
+    /// written down. The toolbar pill and the capture surface both read this.
+    @Published private(set) var listeningPaused = false
     /// The meeting is about to end by itself (a hang-up or a long silence) unless someone keeps it going.
     @Published private(set) var ending: MeetingEndWatch.Pending?
     /// The last meeting ended by itself: the menu says so, and the next call in a meeting app starts a new one.
@@ -46,6 +49,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var notesShown = false
     private var endWatch: MeetingEndWatch?
     private var endTimer: Timer?
+    /// The capture surface's level and clock.
+    private var captureTimer: Timer?
+    /// The clock of the listening: it stands still while the listening is on hold, so the time
+    /// spent on hold is not part of the meeting.
+    private var listenClock: CaptureClock?
     /// Debug: meeting apps in a call instead of what Core Audio says, and shorter waits.
     private var fakeCalls: [String: String]?
     private var endTimesOverride: (silence: Double, countdown: Double, grace: Double)?
@@ -88,6 +96,8 @@ final class AppModel: ObservableObject {
     let loginItem = LoginItem()
     lazy var notes = NotesEngine(ai: ai, store: store)
     lazy var notesWindow = NotesWindowController(model: self)
+    /// The live words of whichever source is running, in the one shape both are read through.
+    let capture = CaptureFeed()
     let sample = SamplePlayer()
     let speakers = SpeakerTagger()
     lazy var speakerNamer = SpeakerNamer(ai: ai, store: store)
@@ -102,6 +112,9 @@ final class AppModel: ObservableObject {
     /// Opens the menu bar panel, leaving it open if it already is: the main window's button
     /// means "show me the listener", not "flip the listener".
     var openPanel: (() -> Void)?
+    /// Shows the app's own menu (纪要 / 显示 / 窗口 …) next to a point in the window, so the
+    /// commands are one click away without going to the menu bar.
+    var showMenu: ((_ anchor: NSRect) -> Void)?
 
     private var lineForSegment: [Int: String] = [:]
     private var lineCounter = 0
@@ -120,6 +133,9 @@ final class AppModel: ObservableObject {
         listen.onSubtitle = { [weak self] src, dst in
             self?.liveSource = src
             self?.liveTranslation = dst
+            // The system audio path reports the words being heard through the subtitle callback;
+            // the transcript column reads them from here, like the microphone path does.
+            self?.capture.setLive(src, words: [])
             if !src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self?.heardSpeech(); self?.heardWords() }
             guard let self, self.settings.displayMode == "bar" else { return }
             self.overlay.clearStatus()
@@ -148,6 +164,10 @@ final class AppModel: ObservableObject {
             if self.heldJoin?.seg.id == segID { self.heldJoin?.translation = text }
             guard let line = self.lineForSegment[segID] else { return }
             self.store.setTranslation(lineID: line, text)
+            // The translation arrives after the sentence: the transcript shows it in place.
+            if let i = self.capture.lines.firstIndex(where: { $0.id == line }) {
+                self.capture.lines[i].translation = text
+            }
         }
 
         diagnostics.enabled = { [weak self] in self?.settings.diagnostics ?? false }
@@ -250,6 +270,43 @@ final class AppModel: ObservableObject {
         }
         endTimer = watch
         RunLoop.main.add(watch, forMode: .common)
+        // The capture surface shows how loud the input is and how long it has run: both need
+        // reading a few times a second while something is being heard.
+        let captureTick = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickCapture() }
+        }
+        captureTimer = captureTick
+        RunLoop.main.add(captureTick, forMode: .common)
+    }
+
+    /// Keeps the live capture's level and clock moving, whichever source is running.
+    ///
+    /// A paused recording counts as running: the microphone is still open, so the meter keeps
+    /// moving, and the two places that show the capture (the toolbar pill and the capture
+    /// surface) read the same numbers.
+    private func tickCapture() {
+        if recorder.state == .recording || recorder.state == .preparing || recorder.state == .paused {
+            capture.level = recorder.level
+            capture.waveform = recorder.waveform
+            capture.elapsed = recorder.elapsed
+            capture.running = true
+            return
+        }
+        guard listen.isRunning else {
+            capture.running = false
+            return
+        }
+        capture.running = true
+        // The system audio path reports its level in decibels; the scope wants the same
+        // 0…1 the microphone gives.
+        let rms = listen.router.takeLevel()
+        let db = 20 * log10(max(Double(rms), 1e-6))
+        let v = Float(min(1, max(0, (db + 40) / 40)))
+        capture.level = v
+        capture.waveform.append(v)
+        if capture.waveform.count > 48 { capture.waveform.removeFirst(capture.waveform.count - 48) }
+        // The clock stands still while the listening is on hold.
+        capture.elapsed = listenElapsed
     }
 
     func setOverlayAuto(_ on: Bool) {
@@ -267,6 +324,7 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         running = listen.isRunning
+        listeningPaused = listen.isPaused
         // Once the tap has run, the permission is there: pausing doesn't take it away.
         systemAudioOK = systemAudioOK || listen.isRunning
         summary = listen.languageSummary()
@@ -408,6 +466,7 @@ final class AppModel: ObservableObject {
         autoEnded = false
         endWatch = MeetingEndWatch(config: endConfig, start: Date())
         setEnding(nil)
+        listenClock = CaptureClock(startedAt: Date())
         if settings.recordAudio {
             listen.router.setRecording(store.systemAudioURL(session.id))
             speak.setRecording(store.micAudioURL(session.id))
@@ -427,6 +486,7 @@ final class AppModel: ObservableObject {
         autoEnded = false
         endWatch = nil
         setEnding(nil)
+        listenClock = nil
         diagnostics.end()
         listen.stop()
         listen.router.setRecording(nil)
@@ -528,14 +588,7 @@ final class AppModel: ObservableObject {
         withAnimation(.easeOut(duration: 0.25)) {
             recordSaving = saving
         }
-        // The passage is short: it says what happened and then gets out of the way, into the
-        // meeting the recording became.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-            withAnimation(.easeInOut(duration: 0.35)) {
-                if self.recordSaving?.sessionID == id { self.recordSaving = nil }
-            }
-            self.openSavedMeeting()
-        }
+        // The passage stays until the user taps 查看会议记录, then the meeting record opens.
     }
 
     /// The meeting the finished recording became, opened in the records window.
@@ -596,7 +649,32 @@ final class AppModel: ObservableObject {
         if alert.runModal() == .alertFirstButtonReturn { stop() }
     }
 
-    /// The bottom-left 诊断 switch in settings: shows or hides the 诊断 tab.
+    //// Puts the listening on hold: the tap stays open (the meter still moves) but nothing said
+    /// while paused is written down, and the clock stands still.
+    func pauseListening() {
+        guard listen.isRunning, !listen.isPaused else { return }
+        listen.pause()
+        listenClock?.pause()
+        refresh()
+        debugLog("listen: paused elapsed=\(Int(listenElapsed))")
+    }
+
+    /// Takes the listening back up. The words continue from where the pause was.
+    func resumeListening() {
+        guard listen.isRunning, listen.isPaused else { return }
+        listen.resume()
+        listenClock?.resume()
+        refresh()
+        debugLog("listen: resumed elapsed=\(Int(listenElapsed))")
+    }
+
+    /// How long the meeting has been running. A pause stops the clock: the time spent on hold
+    /// is not part of the meeting.
+    var listenElapsed: TimeInterval {
+        listenClock?.elapsed() ?? 0
+    }
+
+    // The bottom-left 诊断 switch in settings: shows or hides the 诊断 tab.
     func setDiagnostics(_ on: Bool) {
         settings.diagnostics = on
         if !on && settingsSection == .diagnostics { settingsSection = .overlay }
@@ -1132,6 +1210,10 @@ final class AppModel: ObservableObject {
         joined.cut = seg.cut
         lastHeard = (joined, prev.line)
         store.setSource(lineID: prev.line, text)
+        // The sentence grew: the transcript shows the whole of it now.
+        if let i = capture.lines.firstIndex(where: { $0.id == prev.line }) {
+            capture.lines[i].text = text
+        }
         listen.join(seg.id, into: prev.seg.id, text: text)
         contentLog("JOIN \(prev.line) += \(seg.text)")
         heardWords()
@@ -1143,6 +1225,11 @@ final class AppModel: ObservableObject {
         lineForSegment[seg.id] = id
         store.append(TranscriptLine(id: id, t: t, speaker: "them", src: seg.text, dst: translation ?? seg.translation,
                                     srcLang: seg.sourceCode, dstLang: listen.resolvedTarget))
+        // The sentence has settled: it joins the transcript the reader sees, and the live row
+        // gives way to it.
+        capture.lines.append(RecordLine(id: id, t: t, text: seg.text, translation: translation ?? seg.translation,
+                                        lang: seg.sourceCode))
+        capture.setLive("", words: [])
         var kept = seg
         kept.voiceSamples = nil
         lastHeard = (kept, id)
@@ -1387,7 +1474,7 @@ final class AppModel: ObservableObject {
         case "mainShow": mainShow = arg
         case "recordRender":
             // The recording surface drawn offscreen, for checking it without a person at the mic.
-            let host = NSHostingView(rootView: RecordView(engine: recorder, model: self, notes: notes)
+            let host = NSHostingView(rootView: CaptureView(model: self, notes: notes, engine: recorder, feed: capture)
                 .frame(width: 1180, height: 720))
             let w = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 1180, height: 720),
                              styleMask: .borderless, backing: .buffered, defer: false)
@@ -1510,10 +1597,32 @@ final class AppModel: ObservableObject {
         case "recordStop":
             endRecording()
             debugLog("record: stopped session=\(store.liveID ?? "?") lines=\(recorder.lines.count)")
+        case "recordPause":
+            recorder.pause()
+            debugLog("record: paused state=\(recorder.state)")
+        case "recordResume":
+            recorder.resume()
+            debugLog("record: resumed state=\(recorder.state)")
         case "recordState":
             debugLog("record: state=\(recorder.state) elapsed=\(Int(recorder.elapsed)) lines=\(recorder.lines.count) "
                 + "live=\(recorder.live.prefix(30)) lang=\(recorder.lang?.locale ?? "-") problem=\(recorder.problem ?? "-") "
                 + "level=\(String(format: "%.3f", recorder.level)) words=\(recorder.liveWords.count)")
+        case "captureState":
+            // Both sources as the capture surface sees them.
+            debugLog("capture: source=\(capture.source.rawValue) running=\(capture.running) "
+                + "feed=\(capture.lines.count) live=\(capture.live.prefix(30)) elapsed=\(Int(capture.elapsed)) "
+                + "level=\(String(format: "%.3f", capture.level)) systemRunning=\(listen.isRunning) "
+                + "micState=\(recorder.state) micLines=\(recorder.lines.count)")
+        case "listenPause":
+            pauseListening()
+            debugLog("listen: paused paused=\(listen.isPaused) elapsed=\(Int(listenElapsed))")
+        case "listenResume":
+            resumeListening()
+            debugLog("listen: resumed paused=\(listen.isPaused) elapsed=\(Int(listenElapsed))")
+        case "listenState":
+            debugLog("listen: running=\(listen.isRunning) paused=\(listen.isPaused) "
+                + "elapsed=\(Int(listenElapsed)) lines=\(store.session(store.liveID ?? "")?.lines.count ?? 0) "
+                + "status=\(listen.statusText)")
         case "recordScope":
             // The levels the scope draws, so the shape can be checked without a person at the mic.
             let levels = recorder.waveform.map { String(format: "%.2f", $0) }
@@ -1616,6 +1725,24 @@ final class AppModel: ObservableObject {
             if let img = r.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: p[1]))
             }
+        case "pillRender":
+            // The toolbar pill as drawn, for checking it against the capture surface without
+            // Screen Recording permission.
+            let host = NSHostingView(rootView: ListenPill(model: self))
+            let size = host.fittingSize
+            let w = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: size.width, height: size.height),
+                             styleMask: .borderless, backing: .buffered, defer: false)
+            w.isReleasedWhenClosed = false
+            w.contentView = host
+            w.orderBack(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                host.layoutSubtreeIfNeeded()
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg))
+                }
+                w.orderOut(nil)
+            }
         case "windowsRender":
             // Every visible window as drawn (<dir>/<n>-<class>.png), without Screen Recording permission.
             for (i, w) in NSApp.windows.enumerated() where w.isVisible {
@@ -1627,7 +1754,9 @@ final class AppModel: ObservableObject {
             }
         case "interfaceLanguage":
             // Puts the interface in a language without a restart, for checking the English UI.
-            UserDefaults.standard.set(arg == "system" ? nil : [arg], forKey: "AppleLanguages")
+            // It goes through the same door as the settings row, so the pick in memory and the
+            // pick on disk stay the same.
+            InterfaceLanguage.choose(arg)
             debugLog("interfaceLanguage=\(InterfaceLanguage.current)")
         case "notesState": debugLog("notes state=\(notes.state) topics=\(notes.notes.topics.count) covered=\(notes.notes.covered) glossary=\(notes.glossary.count) timedPoints=\(notes.notes.topics.reduce(0) { $0 + ($1.pointTimes?.compactMap { $0 }.count ?? 0) })/\(notes.notes.topics.reduce(0) { $0 + $1.points.count }) fresh=\(notes.fresh.count)")
         case "aiSimulate", "lingSimulate":
@@ -1740,6 +1869,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
         model.openPanel = { [weak self] in self?.openPopover() }
+        model.showMenu = { [weak self] anchor in
+            self?.showAppMenu(under: anchor)
+        }
         model.openOnboarding = { [weak self] in self?.showOnboarding() }
         runningObserver = model.$running.combineLatest(model.updates.$update).sink { [weak self] live, update in
             self?.statusItem.button?.image = BrandImage.menuBar(live: live, badge: update != nil)
@@ -1847,6 +1979,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.refresh()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
+    }
+
+    /// Shows the app's own menu (纪要 / 显示 / 窗口 …) under a point on the screen.
+    ///
+    /// The menu bar is where the commands live, but the records window is where people are when
+    /// they want them, so the same menu is shown here: the 纪要 menu with its ⌘R, the 显示
+    /// menu, the window list.
+    func showAppMenu(under anchor: NSRect) {
+        guard let main = NSApp.mainMenu else { return }
+        // The first item is the app's own menu; the commands start at 纪要.
+        guard let notes = main.items.first(where: { $0.title == L("纪要") })?.submenu else { return }
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow, let view = window.contentView else { return }
+        // The menu pops open where the mouse is, the way a menu bar menu does.
+        let point = NSPoint(x: anchor.minX, y: anchor.minY)
+        guard let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: window.windowNumber, context: nil,
+                                            eventNumber: 0, clickCount: 1, pressure: 1) else { return }
+        NSMenu.popUpContextMenu(notes, with: event, for: view)
     }
 
     // MARK: Main window

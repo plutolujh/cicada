@@ -621,8 +621,8 @@ struct MainWindowView: View {
                 // The two sides swap with a slide, so a finished recording reads as
                 // becoming a meeting rather than as one screen replacing another.
                 ZStack {
-                    if surface == "record" {
-                        RecordView(engine: model.recorder, model: model, notes: model.notes)
+                    if surface == "capture" {
+                        CaptureView(model: model, notes: model.notes, engine: model.recorder, feed: model.capture)
                             .transition(.asymmetric(
                                 insertion: .move(edge: .trailing).combined(with: .opacity),
                                 removal: .move(edge: .trailing).combined(with: .opacity)))
@@ -648,7 +648,7 @@ struct MainWindowView: View {
             if parts.count > 2 { view = parts[2] }
             // A meeting that is being shown comes up on the meeting side, not on the
             // recording side: the recording is over, and what it became is what is read.
-            if surface == "record" { surface = "meetings" }
+            if surface == "capture" { surface = "meetings" }
         }
     }
 
@@ -656,24 +656,30 @@ struct MainWindowView: View {
     private var surfaceSwitch: some View {
         HStack(spacing: 18) {
             surfaceButton(L("会议记录"), id: "meetings")
-            surfaceButton(L("麦克风录音"), id: "record")
+            surfaceButton(L("实时识别"), id: "capture")
             Spacer()
-            // A quick way to open the listening panel from here: the panel is the native surface
-            // for "listen to system audio", but users expect to find it from the main window too.
-            Button { model.openPanel?() } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "waveform.and.magnifyingglass").font(.system(size: 11))
-                    Text(L("听系统声音")).font(.system(size: 12))
-                }
-                .foregroundStyle(Palette.secondary)
-                .padding(.horizontal, 10).frame(height: 26)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Palette.fill))
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+            menuButton
         }
         .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(Self.hairline).frame(height: 1) }
+    }
+
+    /// Opens the menu bar panel (the same panel the menu bar icon opens).
+    /// The panel is a popover anchored to the status item, so clicking this button
+    /// is equivalent to clicking the menu bar icon.
+    private var menuButton: some View {
+        Button { model.showPanel?() } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "line.3.horizontal").font(.system(size: 11))
+                Text(L("菜单")).font(.system(size: 12))
+            }
+            .foregroundStyle(Palette.secondary)
+            .padding(.horizontal, 10).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Palette.fill))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(L("打开面板"))
     }
 
     private func surfaceButton(_ title: String, id: String) -> some View {

@@ -85,6 +85,12 @@
 "复制纪要" = "Copy Notes";
 "导出" = "Export";
 "SRT 字幕…" = "SRT Subtitles…";
+"开始录" = "Start";
+"暂停录" = "Pause Recording";
+"恢复录" = "Resume Recording";
+"停止录" = "Stop Recording";
+"暂停听" = "Pause Listening";
+"恢复听" = "Resume Listening";
 "会议记录" = "Meetings";
 "显示" = "Display";
 "字幕条" = "Subtitle bar";
@@ -146,6 +152,50 @@
 "正在记录会议" = "A meeting is being recorded";
 "退出会结束这场记录，已记下的内容会保存。" = "Quitting ends this recording. What has been recorded so far is saved.";
 "退出" = "Quit";
+
+/* CaptureSource */
+"系统声音" = "System voice";
+"麦克风" = "Microphone";
+"听电脑里放的声音：会议、视频。" = "What the Mac is playing: a call, a video.";
+"录房间里的声音：说话的人。" = "The microphone: the people in the room.";
+
+/* CaptureViews */
+"新录音" = "New recording";
+"原文、译文或双语" = "Original, translation, or both";
+"导出录音" = "Export the recording";
+"自动识别" = "Auto-detect";
+"保留音频" = "Keep audio";
+"录音翻译成哪种语言" = "Which language the recording is translated into";
+"不翻译" = "No translation";
+"翻译成 %@" = "Translate to %@";
+"原文" = "Original";
+"译文" = "Translation";
+"双语" = "Both";
+"开始听" = "Start listening";
+"开始录音" = "Start recording";
+"暂停" = "Pause";
+"恢复" = "Resume";
+"停止" = "Stop";
+"导出 Markdown" = "Export Markdown";
+"导出 Word" = "Export Word";
+"导出字幕 (SRT)" = "Export subtitles (SRT)";
+"复制 Markdown" = "Copy Markdown";
+"识别在本机完成，只有翻译和总结会用到 AI 服务。" = "Recognition runs on this Mac; only translation and the summary use the AI service.";
+"点“开始录音”，对着麦克风说话。" = "Press “Start recording” and talk to the microphone.";
+"点“开始听”，电脑里放的声音会出现在这里。" = "Press “Start listening” and what the Mac plays shows up here.";
+"人物 %lld" = "Person %lld";
+"从这里播放" = "Play from here";
+"改一下" = "Correct";
+"合并或拆分" = "Merge or split";
+"和下一句合并" = "Merge with the next one";
+"从这里分成两句" = "Split into two here";
+"改正这句话" = "Correct this sentence";
+"保存" = "Save";
+"正在更新…" = "Updating…";
+"重新总结" = "Summarize again";
+"纪要由 AI 服务整理，需要在设置里填好服务 key。" = "The notes come from the AI service; add its key in Settings.";
+"说几句之后，这里会边听边写。" = "Say a few words and it writes itself here as you talk.";
+"正在整理…" = "Putting it together…";
 
 /* CustomProvider */
 "填入服务商的接口地址和模型名，再填它的 API key。" = "Enter the service's endpoint and model, then its API key.";
@@ -212,6 +262,7 @@
 "跟随系统" = "Follow system";
 "简体中文" = "简体中文";
 "日本語" = "日本語";
+"跟随系统（%@）" = "Follow system (%@)";
 
 /* LanguageSettings */
 "界面" = "Interface";
@@ -224,10 +275,8 @@
 "只看原文时不翻译，也不用 Ling 额度" = "Original: no translation, no Ling quota";
 "翻译成" = "Translate to";
 "只按这种语言识别" = "Recognize only this language";
-"自动识别" = "Auto-detect";
 "对方说的正是系统语言时，翻成系统里的另一种" = "When they speak your system language, translates into your other system language";
 "对方说的就是这种语言时不翻译" = "Not translated when they already speak this language";
-"跟随系统（%@）" = "Follow system (%@)";
 "纪要语言" = "Notes language";
 "实时纪要和完整版同一种语言" = "Live and full notes use the same language";
 "我的语言 · %@" = "Mine · %@";
@@ -238,7 +287,6 @@
 "跟随对方（%@）" = "Follow them (%@)";
 "跟随对方" = "Follow them";
 "对方说" = "They say";
-"原文" = "Original";
 "（同声传译未开）" = "(interpreting off)";
 "你说" = "You say";
 "现在听出是 %@" = "Currently hearing %@";
@@ -263,10 +311,18 @@
 "翻译暂不可用" = "Translation unavailable for now";
 
 /* ListenPill */
-"开始听" = "Start listening";
+"收听已暂停" = "Listening Paused";
+"麦克风录音中" = "Microphone recording in progress";
+"录音已暂停" = "Recording Paused";
 "知了" = "Cicada";
 "会议已自动结束" = "Meeting ended by itself";
+"暂停收听" = "Pause Listening";
 "结束" = "End";
+"恢复收听" = "Resume Listening";
+"正在录" = "Recording";
+"暂停录音" = "Pause Recording";
+"停止录音" = "Stop Recording";
+"恢复录音" = "Resume Recording";
 
 /* MicUsersView */
 "顺便关掉自动调节麦克风音量和降噪，译文会更清楚" = "Also turn off automatic mic volume and noise suppression so the translation sounds clearer";
@@ -319,7 +375,6 @@
 "正在说" = "Speaking";
 "从这里开始听" = "Listening began";
 "原话" = "Original";
-"译文" = "Translation";
 "此刻" = "Now";
 "等有人开口" = "Waiting for someone to speak";
 "收起" = "Hide";
@@ -370,7 +425,6 @@
 "这场会议" = "This meeting";
 "只改这一场，默认值在 设置 › 语言" = "Changes only this meeting; defaults are in Settings › Language";
 "还没听出来" = "Not detected yet";
-"双语" = "Both";
 "只看译文" = "Translation";
 "只看原文" = "Original";
 "换了以后会马上用新语言重写纪要" = "Changing it rewrites the notes in the new language right away";
@@ -443,7 +497,6 @@
 "已允许" = "Allowed";
 "允许" = "Allow";
 "去打开" = "Open Settings";
-"麦克风" = "Microphone";
 "只在按住说话键时录音" = "Records only while you hold the talk key";
 "%@已选虚拟麦克风，对方能听到译文" = "%@ is on the virtual mic; they hear the translation";
 "系统麦克风已换成 %@，用默认麦克风的会议软件不用再选" = "System mic is now %@; meeting apps on the default mic need no change";
@@ -517,36 +570,6 @@
 /* RecordScope */
 "麦克风的响度" = "How loud the microphone hears";
 "录音时长" = "Recording time";
-
-/* RecordViews */
-"新录音" = "New recording";
-"原文、译文或双语" = "Original, translation, or both";
-"导出录音" = "Export the recording";
-"保留音频" = "Keep audio";
-"录音翻译成哪种语言" = "Which language the recording is translated into";
-"不翻译" = "No translation";
-"翻译成 %@" = "Translate to %@";
-"导出 Markdown" = "Export Markdown";
-"导出 Word" = "Export Word";
-"导出字幕 (SRT)" = "Export subtitles (SRT)";
-"复制 Markdown" = "Copy Markdown";
-"停止" = "Stop";
-"开始录音" = "Start recording";
-"点“开始录音”，对着麦克风说话。" = "Press “Start recording” and talk to the microphone.";
-"识别在本机完成，只有翻译和总结会用到 AI 服务。" = "Recognition runs on this Mac; only translation and the summary use the AI service.";
-"人物 %lld" = "Person %lld";
-"改正这句话" = "Correct this sentence";
-"保存" = "Save";
-"从这里播放" = "Play from here";
-"改一下" = "Correct";
-"合并或拆分" = "Merge or split";
-"和下一句合并" = "Merge with the next one";
-"从这里分成两句" = "Split into two here";
-"正在更新…" = "Updating…";
-"重新总结" = "Summarize again";
-"纪要由 AI 服务整理，需要在设置里填好服务 key。" = "The notes come from the AI service; add its key in Settings.";
-"说几句之后，这里会边听边写。" = "Say a few words and it writes itself here as you talk.";
-"正在整理…" = "Putting it together…";
 
 /* SessionStore */
 "会议 %@" = "Meeting %@";
@@ -840,8 +863,9 @@
 "虚拟麦克风还没装好" = "Virtual mic isn't set up yet";
 "对方听到 %@ · %@" = "They hear %@ · %@";
 "对方听到 %@" = "They hear %@";
-"麦克风录音" = "Microphone recording";
-"听系统声音" = "Listen to system audio";
+"实时识别" = "Live capture";
+"打开面板" = "Open Panel";
+"菜单" = "Menu";
 "搜索" = "Search";
 "没有找到“%@”" = "Nothing found for “%@”";
 "今天" = "Today";
@@ -901,7 +925,6 @@
 "声音" = "Voice";
 "选择对方听到的声音" = "Choose the voice they hear";
 "试听" = "Preview";
-"系统声音" = "System voice";
 "你的音色" = "Your voice";
 "填入 key：声音更自然，还能用你自己的声音" = "Add a key: more natural voices, and your own";
 "去填写" = "Add key";
@@ -924,7 +947,6 @@
 "请用平时开会的自然语气朗读以下段落，约 15 秒，在安静环境下录制效果最佳。" = "Read this passage aloud the way you talk in meetings, about 15 s. A quiet room works best.";
 "这是我自己的声音。只在我说话时用它替我翻译。" = "This is my own voice. Use it only to translate for me when I speak.";
 "读完了" = "Done";
-"开始录" = "Start";
 "再录一次" = "Record Again";
 "正在听写…" = "Transcribing…";
 "%lld–%lld 秒" = "%lld–%lld s";

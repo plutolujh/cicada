@@ -32,7 +32,7 @@ import SwiftUI
         let item = NSToolbarItem(itemIdentifier: id)
         let root: AnyView
         if id == Self.pill {
-            root = AnyView(ListenPill(model: model, store: model.store))
+            root = AnyView(ListenPill(model: model))
             item.label = L("开始听")
         } else {
             root = AnyView(
@@ -56,21 +56,27 @@ import SwiftUI
 /// listening, ringed by a countdown when the meeting is about to end. The brand is the switch.
 struct ListenPill: View {
     @ObservedObject var model: AppModel
-    @ObservedObject var store: SessionStore
     @State private var endingTotal: Double = 30
 
     var body: some View {
         Group {
             if model.running, let p = model.ending {
                 ending(p)
+            } else if model.running, model.listeningPaused {
+                listeningPaused
             } else if model.running {
                 listening
+            } else if model.recorder.state == .recording {
+                recording
+            } else if model.recorder.state == .paused {
+                paused
             } else {
                 idle
             }
         }
         .animation(.spring(duration: 0.35), value: model.running)
         .animation(.spring(duration: 0.35), value: model.ending)
+        .animation(.spring(duration: 0.35), value: model.recorder.state)
         .onChange(of: model.ending) { _, p in
             if let p { endingTotal = max(1, p.deadline.timeIntervalSinceNow) }
         }
@@ -90,6 +96,9 @@ struct ListenPill: View {
                 Text(model.autoEnded ? L("会议已自动结束") : L("开始听"))
                     .font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink)
                 Text("⌘R").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                // The recording is the second switch: a different microphone, the same notes.
+                Rectangle().fill(Palette.line).frame(width: 1, height: 14)
+                recordIdle
             }
             .padding(.leading, 6).padding(.trailing, 12).frame(height: 32)
             .background(Capsule().fill(Color.white))
@@ -100,20 +109,43 @@ struct ListenPill: View {
         .accessibilityLabel(L("开始听"))
     }
 
+    /// The recording switch, when neither is running. It is the microphone instead of the
+    /// system audio: a recording of a person, kept as a meeting.
+    private var recordIdle: some View {
+        Button { model.startRecording() } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "mic").font(.system(size: 11))
+                Text(L("开始录")).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink)
+                Text("⌘⇧R").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(L("开始录"))
+    }
+
+    /// The listening state: breathing mark, 正在听, level meter, timer, 暂停 / 结束.
     private var listening: some View {
         HStack(spacing: 10) {
             Button { model.requestStop() } label: { BreathingMark(size: 22) }
                 .buttonStyle(.plain).accessibilityLabel(L("结束会议"))
             Text("正在听").font(.system(size: 13, weight: .semibold))
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent)
-            if let start = store.session(store.liveID)?.startedAt {
-                TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                    Text(TranscriptExport.clock(max(0, ctx.date.timeIntervalSince(start))))
-                        .font(.system(size: 13).monospacedDigit())
-                }
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(TranscriptExport.clock(max(0, model.listenElapsed)))
+                    .font(.system(size: 13).monospacedDigit())
             }
+            Button { model.pauseListening() } label: {
+                Text("暂停").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Palette.accent))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("暂停收听"))
             Button { model.requestStop() } label: {
                 Text("结束").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 12).frame(height: 24)
                     .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
                     .contentShape(Capsule())
@@ -124,8 +156,109 @@ struct ListenPill: View {
         .foregroundStyle(.white)
         .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
         .background(Capsule().fill(Palette.ink))
-        // The languages stay one hover away; the pill keeps to state, level and time.
         .help(model.summary)
+    }
+
+    /// The listening is on hold: the tap is still open and the meter still moves, but nothing
+    /// said while paused is written down. 恢复 / 结束.
+    private var listeningPaused: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pause.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
+            Text("已暂停").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent)
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(TranscriptExport.clock(max(0, model.listenElapsed)))
+                    .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
+            }
+            Button { model.resumeListening() } label: {
+                Text("恢复").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Palette.accent))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("恢复收听"))
+            Button { model.requestStop() } label: {
+                Text("结束").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("结束会议"))
+        }
+        .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
+        .background(Capsule().fill(Palette.ink))
+        .help(L("收听已暂停"))
+    }
+
+    /// The recording state: mic icon, 正在录, level meter, timer, 暂停 / 停止.
+    private var recording: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "mic.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
+            Text("正在录").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent, source: .microphone)
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(TranscriptExport.clock(max(0, model.recorder.elapsed)))
+                    .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
+            }
+            Button { model.recorder.pause() } label: {
+                Text("暂停").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Palette.accent))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("暂停录音"))
+            Button { model.endRecording() } label: {
+                Text("停止").font(.system(size: 12, weight: .semibold))
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("停止录音"))
+        }
+        .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
+        .background(Capsule().fill(Palette.ink))
+        .help(L("麦克风录音中"))
+    }
+
+    /// The paused state: the mic is still on but nothing is being written. 恢复 / 停止.
+    private var paused: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "pause.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
+            Text("已暂停").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
+            LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent, source: .microphone)
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(TranscriptExport.clock(max(0, model.recorder.elapsed)))
+                    .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
+            }
+            Button { model.recorder.resume() } label: {
+                Text("恢复").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Palette.accent))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("恢复录音"))
+            Button { model.endRecording() } label: {
+                Text("停止").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12).frame(height: 24)
+                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(L("停止录音"))
+        }
+        .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
+        .background(Capsule().fill(Palette.ink))
+        .help(L("录音已暂停"))
     }
 
     private func ending(_ p: MeetingEndWatch.Pending) -> some View {
@@ -219,8 +352,18 @@ struct LevelMeter: View {
     var bars = 9
     var height: CGFloat = 16
     var color: Color = Palette.accent
+    /// Where the levels come from: the system audio while listening, the microphone while
+    /// recording. Both are read the same way, so the pill and the capture surface show the
+    /// same meter.
+    var source: LevelSource = .system
     @State private var levels: [CGFloat] = []
     private let tick = Timer.publish(every: 0.08, on: .main, in: .common).autoconnect()
+
+    /// The two inputs the meter can show.
+    enum LevelSource {
+        case system
+        case microphone
+    }
 
     var body: some View {
         HStack(spacing: 2) {
@@ -232,11 +375,19 @@ struct LevelMeter: View {
         .frame(height: height)
         .animation(.easeOut(duration: 0.08), value: levels)
         .onReceive(tick) { _ in
-            guard model.running else { return }
-            // Map −40…0 dBFS onto the bar height: quiet speech sits low, a loud voice near the top.
-            let rms = model.listen.router.takeLevel()
-            let db = 20 * log10(max(Double(rms), 1e-6))
-            let v = CGFloat(min(1, max(0, (db + 40) / 40)))
+            let v: CGFloat
+            switch source {
+            case .microphone:
+                // The recorder keeps its own 0…1 level; it is the same number the scope draws.
+                guard model.recorder.state == .recording || model.recorder.state == .paused else { return }
+                v = CGFloat(model.recorder.level)
+            case .system:
+                guard model.running else { return }
+                // Map −40…0 dBFS onto the bar height: quiet speech sits low, a loud voice near the top.
+                let rms = model.listen.router.takeLevel()
+                let db = 20 * log10(max(Double(rms), 1e-6))
+                v = CGFloat(min(1, max(0, (db + 40) / 40)))
+            }
             levels = Array((levels + [v]).suffix(bars))
         }
         .accessibilityHidden(true)

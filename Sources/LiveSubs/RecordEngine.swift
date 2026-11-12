@@ -72,6 +72,7 @@ final class RecordEngine: ObservableObject {
         case idle
         case preparing
         case recording
+        case paused
         case stopping
     }
 
@@ -160,6 +161,9 @@ final class RecordEngine: ObservableObject {
     private var generation = 0
     private var nextLineID = 0
     private var startedAt = Date()
+    /// The clock of the recording: it stands still while the recording is paused, so the time
+    /// on hold is not part of the recording.
+    private var clock = CaptureClock(startedAt: Date())
     private var recordingFormat: AVAudioFormat?
     private var levelPeak: Float = 0
     /// The language the current model is for.
@@ -212,6 +216,7 @@ final class RecordEngine: ObservableObject {
         nextLineID = 0
         generation += 1
         startedAt = Date()
+        clock = CaptureClock(startedAt: startedAt)
         lastDetectionAt = .distantPast
         detecting = false
         nextDetectionAt = 20.0
@@ -234,7 +239,7 @@ final class RecordEngine: ObservableObject {
     }
 
     func stop() {
-        guard state == .recording || state == .preparing else { return }
+        guard state == .recording || state == .preparing || state == .paused else { return }
         state = .stopping
         generation += 1
         tickTimer?.invalidate()
@@ -255,6 +260,27 @@ final class RecordEngine: ObservableObject {
         closeRecorder()
         state = .idle
         debugLog("record: stopped lines=\(lines.count)")
+    }
+
+    /// Pauses the recording: the microphone stays on but no new sentences are transcribed and
+    /// the clock freezes. Press 恢复 to continue; 停止 ends the recording.
+    func pause() {
+        guard state == .recording else { return }
+        clock.pause()
+        elapsed = clock.elapsed()
+        state = .paused
+        generation += 1
+        debugLog("record: paused lines=\(lines.count)")
+    }
+
+    /// Resumes a paused recording: new sentences are transcribed again and the clock moves on
+    /// from where it stopped.
+    func resume() {
+        guard state == .paused else { return }
+        clock.resume()
+        startedAt = Date().addingTimeInterval(-clock.elapsed())
+        state = .recording
+        debugLog("record: resumed lines=\(lines.count)")
     }
 
     /// Turns the sentence being heard into a settled one, when the recording ends in the middle
@@ -545,14 +571,23 @@ final class RecordEngine: ObservableObject {
 
     private func tick() {
         playbackTick()
-        guard state == .recording else { return }
-        elapsed = Date().timeIntervalSince(startedAt)
-        level = levelPeak
-        levelPeak = 0
-        // The scope shows the last few seconds: one sample per tick, so about four seconds.
-        waveform.append(level)
-        if waveform.count > Self.scopeSamples { waveform.removeFirst(waveform.count - Self.scopeSamples) }
-        maybeDetectLanguage()
+        switch state {
+        case .recording:
+            elapsed = clock.elapsed()
+            level = levelPeak
+            levelPeak = 0
+            waveform.append(level)
+            if waveform.count > Self.scopeSamples { waveform.removeFirst(waveform.count - Self.scopeSamples) }
+            maybeDetectLanguage()
+        case .paused:
+            // Mic is still on: keep the meter alive, but freeze the clock and detection.
+            level = levelPeak
+            levelPeak = 0
+            waveform.append(level)
+            if waveform.count > Self.scopeSamples { waveform.removeFirst(waveform.count - Self.scopeSamples) }
+        default:
+            return
+        }
     }
 
     /// How many samples the scope keeps: ten ticks a second, so forty is four seconds.

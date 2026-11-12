@@ -1,17 +1,36 @@
 import AppKit
 import SwiftUI
 
-/// The recording surface: the microphone on the left with what it heard under it, the running
-/// summary on the right.
+/// The one place where words are heard: the system audio or the microphone.
 ///
-/// The transcript is on the left because that is where the eye stays while someone talks; the
-/// summary is on the right because it is read afterwards, and it should not push the words
-/// around while they are arriving.
-struct RecordView: View {
-    @ObservedObject var engine: RecordEngine
+/// Both are the same to the reader — words heard on the left, a summary written from them on
+/// the right — so they share this surface and differ only in the source switch at the top.
+/// The switch is also where the two paths are told apart: whichever is picked is the one that
+/// is running and the one whose words are shown.
+struct CaptureView: View {
     @ObservedObject var model: AppModel
-    /// The notes engine the recording drives: the same one a meeting does.
+    /// The notes engine the capture drives: the same one a meeting does.
     @ObservedObject var notes: NotesEngine
+    /// The microphone path, read when it is the one running.
+    @ObservedObject var engine: RecordEngine
+    /// The live words, in the one shape both sources are read through.
+    @ObservedObject var feed: CaptureFeed
+
+    /// Which source the user picked. Changing it while a capture is running stops the one that
+    /// was: the microphone and the system audio cannot both be listened to at once.
+    @State private var picked: CaptureSource = .system
+    /// The source the surface shows: the one that is running, or the one that was picked when
+    /// nothing runs. The toolbar pill and this surface therefore always show the same thing.
+    private var source: CaptureSource {
+        if engine.state == .recording || engine.state == .preparing || engine.state == .paused {
+            return .mic
+        }
+        return picked
+    }
+    /// The sentence being corrected, when the user is correcting one.
+    @State private var editing: String?
+    /// The words being corrected.
+    @State private var editText = ""
 
     /// The language the sentences are translated into; "none" leaves them as they were said.
     private var target: String { model.recordTarget }
@@ -19,13 +38,6 @@ struct RecordView: View {
     private var autoLang: Bool { model.recordAutoLang }
     /// Keep the audio next to the transcript.
     private var keepsAudio: Bool { model.recordKeepsAudio }
-
-    /// The sentence being corrected, when the user is correcting one.
-    @State private var editing: String?
-    /// The words being corrected.
-    @State private var editText = ""
-    /// The export menu, when it is open.
-    @State private var exporting = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -56,40 +68,124 @@ struct RecordView: View {
         .onChange(of: model.recordTarget) { _, v in engine.target = v }
         .onChange(of: model.recordAutoLang) { _, v in engine.detectsLanguage = v }
         .onChange(of: model.recordKeepsAudio) { _, v in engine.keepsAudio = v }
+        .onChange(of: engine.state) { _, _ in feed.source = source }
     }
 
-    // MARK: Left — the microphone and the words
+    // MARK: Left — the source and the words
 
     private var left: some View {
         VStack(alignment: .leading, spacing: 0) {
+            sourceSwitch
+            Rectangle().fill(MainWindowView.hairline).frame(height: 1)
             controls
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
             transcript
         }
     }
 
+    /// The switch between the two ways in. It says which one is running, so the place where
+    /// the words come from is never in doubt.
+    private var sourceSwitch: some View {
+        HStack(spacing: 8) {
+            ForEach(CaptureSource.allCases) { s in
+                sourceButton(s)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+
+    private func sourceButton(_ s: CaptureSource) -> some View {
+        let on = source == s
+        let live = running(s)
+        return Button { switchSource(to: s) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: s.icon).font(.system(size: 11))
+                Text(s.title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                if live {
+                    Circle().fill(Palette.accent).frame(width: 6, height: 6)
+                }
+            }
+            .foregroundStyle(on ? Palette.ink : Palette.secondary)
+            .padding(.horizontal, 12).frame(height: 30)
+            .background(RoundedRectangle(cornerRadius: 9).fill(on ? Palette.fill : Color.clear))
+            .overlay {
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(on ? Palette.line : Color.clear, lineWidth: 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(Text(s.hint))
+    }
+
+    /// Whether this source is the one running right now: recording, paused, or getting ready.
+    private func running(_ s: CaptureSource) -> Bool {
+        switch s {
+        case .system: return model.running
+        case .mic: return engine.state == .recording || engine.state == .preparing || engine.state == .paused
+        }
+    }
+
+    /// Picks the source. The one that was running is stopped first: the microphone and the
+    /// system audio cannot both be listened to at once, and the words of one would be mixed
+    /// with the words of the other.
+    private func switchSource(to s: CaptureSource) {
+        guard s != picked else { return }
+        if running(picked) { stopRunning(picked) }
+        picked = s
+        feed.source = s
+        feed.reset()
+    }
+
+    private func stopRunning(_ s: CaptureSource) {
+        switch s {
+        case .system: model.requestStop()
+        case .mic:
+            engine.stop()
+            model.endRecording()
+        }
+    }
+
+    private func pauseRunning(_ s: CaptureSource) {
+        switch s {
+        case .system: model.pauseListening()
+        case .mic: engine.pause()
+        }
+    }
+
+    private func resumeRunning(_ s: CaptureSource) {
+        switch s {
+        case .system: model.resumeListening()
+        case .mic: engine.resume()
+        }
+    }
+
+    // MARK: The controls
+
     private var controls: some View {
         HStack(spacing: 12) {
-            Text("新录音").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
+            Text(source == .mic ? "新录音" : "系统声音")
+                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
             Spacer(minLength: 0)
             chips
             displayPicker
             exportButton
             scope
             clock
-            recordButton
+            actionButtons
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
     }
 
-    /// The scope: how loud the microphone hears you right now.
+    /// The scope: how loud the input hears you right now.
     private var scope: some View {
-        RecordScope(levels: engine.waveform, live: engine.state == .recording)
+        RecordScope(levels: feed.waveform, live: running(source))
     }
 
-    /// How long the recording has been running.
+    /// How long the capture has been running.
     private var clock: some View {
-        RecordClock(elapsed: engine.elapsed, live: engine.state == .recording)
+        RecordClock(elapsed: feed.elapsed, live: running(source))
     }
 
     /// The three switches, each one saying what it does rather than what it is.
@@ -101,9 +197,9 @@ struct RecordView: View {
         }
     }
 
-    /// The language the sentences go into. A menu, not a switch: recording in Chinese and reading
-    /// in English is as ordinary as the other way round, and the sentence's own language is only
-    /// known while it is being heard.
+    /// The language the sentences go into. A menu, not a switch: recording in Chinese and
+    /// reading in English is as ordinary as the other way round, and the sentence's own
+    /// language is only known while it is being heard.
     private var translationChip: some View {
         Menu {
             ForEach(targetOptions, id: \.id) { o in
@@ -146,15 +242,12 @@ struct RecordView: View {
     }
 
     /// What the transcript shows: the words as they were said, the translation, or both.
-    ///
-    /// The picker only appears when there is a translation to show; without one, the original
-    /// is all there is.
     private var displayPicker: some View {
         HStack(spacing: 0) {
-            ForEach(RecordEngine.Display.allCases, id: \.self) { mode in
-                Button { engine.display = mode } label: {
-                    Text(displayTitle(mode)).font(.system(size: 11, weight: engine.display == mode ? .semibold : .regular))
-                        .foregroundStyle(engine.display == mode ? Palette.accentInk : Palette.secondary)
+            ForEach(CaptureFeed.Display.allCases, id: \.self) { mode in
+                Button { feed.display = mode } label: {
+                    Text(displayTitle(mode)).font(.system(size: 11, weight: feed.display == mode ? .semibold : .regular))
+                        .foregroundStyle(feed.display == mode ? Palette.accentInk : Palette.secondary)
                         .padding(.horizontal, 8).frame(height: 26)
                         .contentShape(Rectangle())
                 }
@@ -167,7 +260,7 @@ struct RecordView: View {
         .help(L("原文、译文或双语"))
     }
 
-    private func displayTitle(_ mode: RecordEngine.Display) -> LocalizedStringKey {
+    private func displayTitle(_ mode: CaptureFeed.Display) -> LocalizedStringKey {
         switch mode {
         case .original: return "原文"
         case .translated: return "译文"
@@ -175,7 +268,86 @@ struct RecordView: View {
         }
     }
 
-    /// The button that exports the recording, in the same formats a meeting can be exported in.
+    /// Starts, pauses/resumes and stops the capture. While something is running, show 暂停/恢复
+    /// and a separate 停止 so "pause" never means "end this recording".
+    @ViewBuilder
+    private var actionButtons: some View {
+        if running(source) {
+            if paused(source) {
+                resumeButton
+            } else {
+                pauseButton
+            }
+            stopButton
+        } else {
+            startButton
+        }
+    }
+
+    /// Whether the running source is on hold.
+    private func paused(_ s: CaptureSource) -> Bool {
+        switch s {
+        case .system: return model.listeningPaused
+        case .mic: return engine.state == .paused
+        }
+    }
+
+    /// The button that starts the capture.
+    private var startButton: some View {
+        Button {
+            switch source {
+            case .system: model.start()
+            case .mic: model.startRecording()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Circle().fill(Palette.ink).frame(width: 9, height: 9)
+                Text(startLabel).font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(.white).padding(.horizontal, 14).frame(height: 30)
+            .background(Capsule().fill(Palette.ink))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(source == .mic && (engine.state == .preparing || engine.state == .stopping))
+    }
+
+    private var startLabel: LocalizedStringKey {
+        source == .system ? "开始听" : "开始录音"
+    }
+
+    private var pauseButton: some View {
+        Button { pauseRunning(source) } label: {
+            Text("暂停").font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white).padding(.horizontal, 14).frame(height: 30)
+                .background(Capsule().fill(Palette.accent))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var resumeButton: some View {
+        Button { resumeRunning(source) } label: {
+            Text("恢复").font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white).padding(.horizontal, 14).frame(height: 30)
+                .background(Capsule().fill(Palette.accent))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var stopButton: some View {
+        Button { stopRunning(source) } label: {
+            Text("停止").font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white).padding(.horizontal, 14).frame(height: 30)
+                .background(Capsule().fill(Palette.ink))
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(source == .mic && engine.state == .stopping)
+    }
+
+    /// The button that exports the capture, in the same formats a meeting can be exported in.
     private var exportButton: some View {
         Menu {
             Button(L("导出 Markdown")) { model.exportRecording(kind: "md") }
@@ -196,43 +368,34 @@ struct RecordView: View {
         .help(L("导出录音"))
     }
 
-    /// The button that starts and stops the recording: a red dot while it runs.
-    private var recordButton: some View {
-        let live = engine.state == .recording
-        return Button {
-            if live {
-                engine.stop()
-                model.endRecording()
-            } else {
-                model.startRecording()
-            }
-        } label: {
-            HStack(spacing: 7) {
-                Circle().fill(live ? Palette.accent : Palette.ink).frame(width: 9, height: 9)
-                Text(live ? "停止" : "开始录音").font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundStyle(.white).padding(.horizontal, 14).frame(height: 30)
-            .background(Capsule().fill(live ? Palette.accent : Palette.ink))
-            .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .disabled(engine.state == .preparing || engine.state == .stopping)
+    // MARK: The words
+
+    /// The words of the source that is running: the microphone's own lines, or the system
+    /// audio's, read through the same column.
+    private var lines: [RecordLine] {
+        source == .mic ? engine.lines : feed.lines
     }
 
-    // MARK: The words
+    private var liveText: String {
+        source == .mic ? engine.live : feed.live
+    }
+
+    private var liveWords: [LiveWord] {
+        source == .mic ? engine.liveWords : feed.liveWords
+    }
 
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    if engine.lines.isEmpty, engine.live.isEmpty {
+                    if lines.isEmpty, liveText.isEmpty {
                         empty
                     }
-                    ForEach(engine.lines) { line in
+                    ForEach(lines) { line in
                         row(line)
                             .id(line.id)
                     }
-                    if !engine.live.isEmpty {
+                    if !liveText.isEmpty {
                         liveRow
                     }
                     Color.clear.frame(height: 1).id("bottom")
@@ -241,7 +404,7 @@ struct RecordView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.never)
-            .onChange(of: engine.lines.count) { _, _ in
+            .onChange(of: lines.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
         }
@@ -249,22 +412,27 @@ struct RecordView: View {
 
     private var empty: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("点“开始录音”，对着麦克风说话。").font(.system(size: 14)).foregroundStyle(Palette.secondary)
+            Text(emptyTitle).font(.system(size: 14)).foregroundStyle(Palette.secondary)
             Text("识别在本机完成，只有翻译和总结会用到 AI 服务。")
                 .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
         }
         .padding(.top, 24)
     }
 
+    /// The empty column says what this source is waiting for.
+    private var emptyTitle: LocalizedStringKey {
+        source == .mic ? "点“开始录音”，对着麦克风说话。" : "点“开始听”，电脑里放的声音会出现在这里。"
+    }
+
     /// The sentence being spoken right now: the words show up as they are said.
     private var liveRow: some View {
         HStack(alignment: .top, spacing: 10) {
-            Text(RecordEngine.clock(engine.elapsed))
+            Text(RecordEngine.clock(elapsed))
                 .font(.system(size: 11).monospacedDigit()).foregroundStyle(Palette.tertiary)
                 .frame(width: 40, alignment: .leading)
             VStack(alignment: .leading, spacing: 3) {
-                if engine.liveWords.isEmpty {
-                    Text(engine.live).font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                if liveWords.isEmpty {
+                    Text(liveText).font(.system(size: 14)).foregroundStyle(Palette.secondary)
                 } else {
                     // The words are shown one by one, the way they are heard; the newest one is
                     // the accent colour, so the eye follows the speaker.
@@ -278,16 +446,9 @@ struct RecordView: View {
         }
     }
 
-    /// The words of the sentence being heard, with the newest one marked.
-    private var liveText: AttributedString {
-        var out = AttributedString()
-        for (i, word) in engine.liveWords.enumerated() {
-            var piece = AttributedString(word.text)
-            piece.foregroundColor = i == engine.liveWords.count - 1 ? Palette.accent : Palette.ink
-            out.append(piece)
-            out.append(AttributedString(" "))
-        }
-        return out
+    /// How long the capture has run.
+    private var elapsed: TimeInterval {
+        source == .mic ? engine.elapsed : feed.elapsed
     }
 
     /// One settled sentence: when it was said, what was said, and what it means.
@@ -298,7 +459,6 @@ struct RecordView: View {
                 .frame(width: 40, alignment: .leading)
                 .padding(.top, 2)
             VStack(alignment: .leading, spacing: 3) {
-                // The voice is named where it changes, the way a chat shows who is talking.
                 if starts.contains(line.id), let person = line.person {
                     HStack(spacing: 5) {
                         Circle().fill(SpeakerColor.ink(person)).frame(width: 6, height: 6)
@@ -317,11 +477,59 @@ struct RecordView: View {
         }
     }
 
+    /// The little buttons beside a sentence: play it, change it, cut it up.
+    ///
+    /// The microphone can be played back and cut up; the system audio is what the Mac was
+    /// playing, so it is only read and corrected.
+    @ViewBuilder
+    private func lineActions(_ line: RecordLine) -> some View {
+        HStack(spacing: 8) {
+            if source == .mic, keepsAudio, engine.audioURL != nil {
+                Button {
+                    engine.play(from: line.t)
+                } label: {
+                    Image(systemName: "play.fill").font(.system(size: 10))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Palette.tertiary)
+                .help(L("从这里播放"))
+            }
+            Button {
+                editText = line.text
+                editing = line.id
+            } label: {
+                Image(systemName: "pencil").font(.system(size: 10))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Palette.tertiary)
+            .help(L("改一下"))
+            if source == .mic {
+                Menu {
+                    Button(L("和下一句合并")) {
+                        guard let next = engine.lines.first(where: { $0.t > line.t }) else { return }
+                        engine.merge(line.id, with: next.id)
+                    }
+                    Button(L("从这里分成两句")) {
+                        engine.split(line.id, at: max(1, Array(line.text).count / 2))
+                    }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 10))
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(Palette.tertiary)
+                .help(L("合并或拆分"))
+            }
+        }
+        .padding(.top, 2)
+    }
+
     /// The words of a settled sentence, in the mode the transcript is in.
     @ViewBuilder
     private func texts(_ line: RecordLine) -> some View {
         let translation = line.translation.flatMap { $0.isEmpty ? nil : $0 }
-        switch engine.display {
+        switch feed.display {
         case .original:
             Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -354,7 +562,7 @@ struct RecordView: View {
                 .background(RoundedRectangle(cornerRadius: 6).fill(Palette.fill))
             HStack(spacing: 10) {
                 Button(L("保存")) {
-                    engine.edit(line.id, text: editText)
+                    save(line.id)
                     editing = nil
                 }
                 .font(.system(size: 12, weight: .semibold))
@@ -366,53 +574,23 @@ struct RecordView: View {
         }
     }
 
-    /// The little buttons beside a sentence: play it, change it, cut it up.
-    @ViewBuilder
-    private func lineActions(_ line: RecordLine) -> some View {
-        HStack(spacing: 8) {
-            if keepsAudio, engine.audioURL != nil {
-                Button {
-                    engine.play(from: line.t)
-                } label: {
-                    Image(systemName: "play.fill").font(.system(size: 10))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Palette.tertiary)
-                .help(L("从这里播放"))
-            }
-            Button {
-                editText = line.text
-                editing = line.id
-            } label: {
-                Image(systemName: "pencil").font(.system(size: 10))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Palette.tertiary)
-            .help(L("改一下"))
-            Menu {
-                Button(L("和下一句合并")) {
-                    guard let next = engine.lines.first(where: { $0.t > line.t }) else { return }
-                    engine.merge(line.id, with: next.id)
-                }
-                Button(L("从这里分成两句")) {
-                    engine.split(line.id, at: max(1, Array(line.text).count / 2))
-                }
-            } label: {
-                Image(systemName: "ellipsis").font(.system(size: 10))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .foregroundStyle(Palette.tertiary)
-            .help(L("合并或拆分"))
+    /// A corrected sentence: the microphone's own copy and the meeting record are both
+    /// written; the system audio's copy is only in the meeting record.
+    private func save(_ id: String) {
+        if source == .mic {
+            engine.edit(id, text: editText)
+        } else if let i = feed.lines.firstIndex(where: { $0.id == id }) {
+            let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, text != feed.lines[i].text else { return }
+            feed.lines[i].text = text
+            model.store.setSource(lineID: id, text)
         }
-        .padding(.top, 2)
     }
 
     /// The lines where the voice changes: the name is shown there only.
     private var starts: Set<String> {
         var out: Set<String> = [], last: Int??
-        for l in engine.lines {
+        for l in lines {
             let key = l.person
             if key != last { out.insert(l.id) }
             last = key
@@ -445,9 +623,9 @@ struct RecordView: View {
             ScrollView {
                 if notes.notes.isEmpty {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(engine.lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
+                        Text(lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
                             .font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                        if !engine.lines.isEmpty {
+                        if !lines.isEmpty {
                             Text("纪要由 AI 服务整理，需要在设置里填好服务 key。")
                                 .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
                         }
@@ -466,8 +644,8 @@ struct RecordView: View {
         }
     }
 
-    /// The recording is still going.
-    private var recording: Bool { engine.state == .recording || engine.state == .preparing }
+    /// The capture is still going.
+    private var recording: Bool { running(source) }
     /// The time of the last line the notes cover ("到 03:52").
     private var coveredUntil: Double? {
         guard notes.notes.covered > 0 else { return nil }
@@ -475,7 +653,7 @@ struct RecordView: View {
         guard notes.notes.covered <= lines.count else { return nil }
         return lines[notes.notes.covered - 1].t
     }
-    /// Where the last topic ends, once the recording has stopped.
+    /// Where the last topic ends, once the capture has stopped.
     private var endedAt: Double? {
         guard !recording else { return nil }
         return model.store.session(notes.shownID ?? "")?.lines.last?.t
@@ -483,11 +661,7 @@ struct RecordView: View {
 
     // MARK: The translation target
 
-    /// The languages a recording can be translated into, with the one in use marked.
-    ///
-    /// The list is the same one the rest of the app uses, so a sentence heard in Chinese can go
-    /// into English and one heard in English can go into Chinese, and both read the way the
-    /// reader expects rather than as a bare code.
+    /// The languages a capture can be translated into, with the one in use marked.
     private var targetOptions: [(id: String, title: String)] {
         [("none", L("不翻译"))] + targetLanguages.map { ($0.code, $0.name) }
     }
