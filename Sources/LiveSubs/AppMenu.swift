@@ -46,6 +46,16 @@ final class AppMenu: NSObject, NSMenuItemValidation {
         exportItem.submenu = export
         notes.addItem(exportItem)
         notes.addItem(.separator())
+        // Recording (microphone) commands
+        notes.addItem(item(L("开始录"), #selector(startRecording), "r", [.command, .shift]))
+        notes.addItem(item(L("暂停录"), #selector(pauseRecording)))
+        notes.addItem(item(L("恢复录"), #selector(resumeRecording)))
+        notes.addItem(item(L("停止录"), #selector(stopRecording)))
+        notes.addItem(.separator())
+        // Listening (system audio) commands
+        notes.addItem(item(L("暂停听"), #selector(pauseListening)))
+        notes.addItem(item(L("恢复听"), #selector(resumeListening)))
+        notes.addItem(.separator())
         notes.addItem(item(L("会议记录"), #selector(openRecords), "0"))
         add(notes, to: main)
 
@@ -121,8 +131,20 @@ final class AppMenu: NSObject, NSMenuItemValidation {
         case #selector(toggleRecording):
             item.title = model.running ? L("停止记录") : L("开始记录")
             return true
+        case #selector(startRecording):
+            return !model.running && model.recorder.state == .idle
+        case #selector(pauseRecording):
+            return model.recorder.state == .recording
+        case #selector(resumeRecording):
+            return model.recorder.state == .paused
+        case #selector(stopRecording):
+            return model.recorder.state == .recording || model.recorder.state == .preparing || model.recorder.state == .paused
+        case #selector(pauseListening):
+            return model.running && !model.listen.isPaused
+        case #selector(resumeListening):
+            return model.running && model.listen.isPaused
         case #selector(updateNotes):
-            return model.store.liveID != nil && model.ling.hasKey && model.notes.state != .updating
+            return model.store.liveID != nil && model.ai.hasKey && model.notes.state != .updating
         case #selector(catchUp):
             return notesWindow.isVisible && !model.notes.notes.isEmpty
         case #selector(copyNotes):
@@ -203,6 +225,36 @@ final class AppMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleRecording() {
         guard let model else { return }
         model.setRunning(!model.running)
+    }
+
+    @objc private func startRecording() {
+        guard let model else { return }
+        model.startRecording()
+    }
+
+    @objc private func pauseRecording() {
+        guard let model else { return }
+        model.recorder.pause()
+    }
+
+    @objc private func resumeRecording() {
+        guard let model else { return }
+        model.recorder.resume()
+    }
+
+    @objc private func stopRecording() {
+        guard let model else { return }
+        model.endRecording()
+    }
+
+    @objc private func pauseListening() {
+        guard let model else { return }
+        model.pauseListening()
+    }
+
+    @objc private func resumeListening() {
+        guard let model else { return }
+        model.resumeListening()
     }
 
     @objc private func updateNotes() { model?.notes.updateNow() }

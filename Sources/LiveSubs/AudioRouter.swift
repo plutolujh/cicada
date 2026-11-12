@@ -61,6 +61,9 @@ final class AudioRouter: @unchecked Sendable {
     private var sinceGap = 0.0
     /// The last short pause between words, on the analyzer's clock: where it ended and how long it was.
     private var pause: (end: Double, length: Double) = (0, 0)
+    /// While paused the audio is not given to the analyzer, so no sentence is made of it. The
+    /// level meter still moves: the tap is still open, and the user can see the room is loud.
+    private var paused = false
 
     /// Experimental voiceprints: the last `voiceLimit` seconds as 16 kHz mono floats, placed on
     /// the analyzer clock so a result's time range finds its audio.
@@ -119,6 +122,12 @@ final class AudioRouter: @unchecked Sendable {
         queue.async { [self] in process(mono) }
     }
 
+    /// Pauses or resumes the flow into the analyzer. The audio keeps arriving either way; only
+    /// what reaches the recognizer stops.
+    func setPaused(_ on: Bool) {
+        queue.async { [self] in paused = on }
+    }
+
     private func process(_ mono: AVAudioPCMBuffer) {
         let n = Int(mono.frameLength)
         guard n > 0, let data = mono.floatChannelData else { return }
@@ -139,9 +148,13 @@ final class AudioRouter: @unchecked Sendable {
         sinceGap += seconds
 
         guard let format, let converted = converter.convert(mono, to: format) else { return }
-        continuation?.yield(AnalyzerInput(buffer: converted))
-        keepVoice(mono)
-        if continuation != nil { fed += seconds }
+        // While paused the audio is heard but not written down: the recognizer does not see it,
+        // so no sentence is made of what was said while the meeting was on hold.
+        if !paused {
+            continuation?.yield(AnalyzerInput(buffer: converted))
+            keepVoice(mono)
+            if continuation != nil { fed += seconds }
+        }
         record(converted)
         ring.append((converted, seconds, voiced))
         ringSeconds += seconds

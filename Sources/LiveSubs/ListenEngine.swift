@@ -34,6 +34,9 @@ final class ListenEngine {
     let router = AudioRouter()
 
     private(set) var isRunning = false
+    /// Whether the listening is on hold: the tap is still open and the meter still moves, but
+    /// nothing said while paused is written down.
+    private(set) var isPaused = false
     private(set) var statusText = L("准备就绪")
     private(set) var activeLang: Lang?
     private(set) var languageConfirmed = false
@@ -53,7 +56,10 @@ final class ListenEngine {
     /// Sentences finished before detection settled the language: recorded once it confirms the
     /// language they were heard in, dropped on a switch (the replay into the new model redoes them).
     private var unconfirmed: [(seg: Segment, at: Date, duration: Double)] = []
-    private var recordable: Bool { settings.sourceMode != .auto || languageConfirmed || ambiguousDetections >= 2 }
+    private var recordable: Bool {
+        RecordGate.recordable(mode: settings.sourceMode, candidates: candidates, active: activeLang,
+                              confirmed: languageConfirmed, ambiguous: ambiguousDetections)
+    }
     private var failureStreak = 0
 
     private var segments: [Segment] = []
@@ -108,6 +114,8 @@ final class ListenEngine {
         installedLocales = Set(installed.map { $0.identifier(.bcp47) })
         candidates = sourceLanguages.filter { installedLocales.contains($0.locale) }
         debugLog("installed speech models: \(installedLocales.sorted()) candidates=\(candidates.map(\.locale))")
+        // The models changed under us: what was held back may be recordable now.
+        if recordable { flushUnconfirmed() }
         onStateChange?()
     }
 
@@ -147,6 +155,7 @@ final class ListenEngine {
 
     func stop() {
         isRunning = false
+        isPaused = false
         generation += 1
         tickTimer?.invalidate()
         tickTimer = nil
@@ -166,6 +175,32 @@ final class ListenEngine {
         volatileInFlight = false
         detecting = false
         setStatus(L("已暂停"))
+    }
+
+    /// Puts the listening on hold: the audio keeps arriving (so the meter still moves) but the
+    /// recognizer does not see it, so nothing said while paused is written down.
+    func pause() {
+        guard isRunning, !isPaused else { return }
+        isPaused = true
+        router.setPaused(true)
+        // The half-sentence in progress is dropped: it was said before the pause, and joining it
+        // to what comes after the resume would make one sentence out of two moments.
+        volatileText = ""
+        volatileTranslation = ""
+        lastVolatileSent = ""
+        volatileEpoch += 1
+        setStatus(L("已暂停"))
+        debugLog("listen paused")
+    }
+
+    /// Takes the listening back up. The recognizer is still there, so the words continue from
+    /// where the pause was.
+    func resume() {
+        guard isRunning, isPaused else { return }
+        isPaused = false
+        router.setPaused(false)
+        setStatus(L("正在听"))
+        debugLog("listen resumed")
     }
 
     func reconnectAudio() {
@@ -522,7 +557,7 @@ final class ListenEngine {
             let result = await self.translate(seg.text, source: seg.sourceCode, trace: trace)
             if let timing = self.finalTiming.removeValue(forKey: id), !trace.attempts.isEmpty {
                 self.onTiming?(SentenceTiming(at: timing.at, side: "them", chars: seg.text.count, recognize: timing.recognize,
-                                              queue: trace.lingQueue, translate: Date().timeIntervalSince(asked), voice: nil,
+                                              queue: trace.aiQueue, translate: Date().timeIntervalSince(asked), voice: nil,
                                               failed: trace.failedSeconds, via: result == nil ? "none" : trace.via,
                                               fallbacks: trace.fallbacks))
             }
