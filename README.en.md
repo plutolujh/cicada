@@ -66,6 +66,12 @@ The words appear as you speak them, one by one, with the newest one in orange, s
 
 Need a break? Press Pause: the microphone stays open (the level meter keeps moving) but no new sentences are written down and the clock stops. Press Resume to carry on, and Stop — the separate button beside it — is what actually ends the recording. Listening to the system audio pauses and resumes the same way, and the menu has a command for each.
 
+### Floating pill
+
+"Floating pill" in the "显示" (Show) menu takes the pill out of the toolbar and puts it on its own: a small borderless window with no title bar and no traffic lights, just the pill, which you can drag anywhere on the screen — over other apps included. It stays when the main window is closed or tucked away in the menu bar, and there is only ever one pill on screen, never two.
+
+Pause, Resume, Stop and End on the pill take the click on the first press; the drag only happens on the body of the pill and never steals a button's click.
+
 ## Privacy & Permissions
 
 Audio capture, language detection, speech recognition (Apple SpeechAnalyzer), and meeting recordings all stay on your Mac. The only data that leaves your device is the recognized text sent for translation and meeting notes, plus the short audio clips you speak while holding the talk key when using a Ling API key. Without an API key, subtitles, translation (via Google with Apple on-device fallback), meeting records, and push-to-talk interpreting all work. Live meeting notes need your own API key, from Ling (Ant Group's model service), MiniMax or any OpenAI-compatible endpoint (see [below](#ai-services)), and an hour of live notes costs roughly ¥0.15 to ¥1 at current Ling pricing. Ling gives ¥10 of credit every month, enough for about 10 to 50 hours of meetings.

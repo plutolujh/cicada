@@ -32,7 +32,8 @@ import SwiftUI
         let item = NSToolbarItem(itemIdentifier: id)
         let root: AnyView
         if id == Self.pill {
-            root = AnyView(ListenPill(model: model))
+            // The floating pill takes over when it is on screen: one pill, not two.
+            root = AnyView(ListenPill(model: model, hiddenWhileFloating: true))
             item.label = L("开始听")
         } else {
             root = AnyView(
@@ -57,26 +58,33 @@ import SwiftUI
 struct ListenPill: View {
     @ObservedObject var model: AppModel
     @State private var endingTotal: Double = 30
+    /// True in the floating panel: the toolbar's own pill steps aside, so there is one pill on
+    /// screen, not two copies of the same state.
+    var hiddenWhileFloating = false
 
     var body: some View {
         Group {
-            if model.running, let p = model.ending {
+            if hiddenWhileFloating, model.floatingPillVisible {
+                Color.clear.frame(width: 0, height: 0)
+            } else if model.running, let p = model.ending {
                 ending(p)
             } else if model.running, model.listeningPaused {
                 listeningPaused
             } else if model.running {
                 listening
-            } else if model.recorder.state == .recording {
+            } else if model.micState == .recording || model.micState == .preparing {
                 recording
-            } else if model.recorder.state == .paused {
+            } else if model.micState == .paused {
                 paused
+            } else if model.micState == .stopping {
+                recording
             } else {
                 idle
             }
         }
         .animation(.spring(duration: 0.35), value: model.running)
         .animation(.spring(duration: 0.35), value: model.ending)
-        .animation(.spring(duration: 0.35), value: model.recorder.state)
+        .animation(.spring(duration: 0.35), value: model.micState)
         .onChange(of: model.ending) { _, p in
             if let p { endingTotal = max(1, p.deadline.timeIntervalSinceNow) }
         }
@@ -106,6 +114,7 @@ struct ListenPill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .pillButton()
         .accessibilityLabel(L("开始听"))
     }
 
@@ -120,6 +129,7 @@ struct ListenPill: View {
             }
         }
         .buttonStyle(.plain)
+        .pillButton()
         .accessibilityLabel(L("开始录"))
     }
 
@@ -127,7 +137,7 @@ struct ListenPill: View {
     private var listening: some View {
         HStack(spacing: 10) {
             Button { model.requestStop() } label: { BreathingMark(size: 22) }
-                .buttonStyle(.plain).accessibilityLabel(L("结束会议"))
+                .buttonStyle(.plain).pillButton().accessibilityLabel(L("结束会议"))
             Text("正在听").font(.system(size: 13, weight: .semibold))
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent)
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
@@ -142,15 +152,17 @@ struct ListenPill: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("暂停收听"))
             Button { model.requestStop() } label: {
                 Text("结束").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).frame(height: 24)
-                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .background(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 1))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("结束会议"))
         }
         .foregroundStyle(.white)
@@ -178,15 +190,17 @@ struct ListenPill: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("恢复收听"))
             Button { model.requestStop() } label: {
                 Text("结束").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).frame(height: 24)
-                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .background(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 1))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("结束会议"))
         }
         .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
@@ -212,14 +226,17 @@ struct ListenPill: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("暂停录音"))
             Button { model.endRecording() } label: {
                 Text("停止").font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 12).frame(height: 24)
-                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .background(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 1))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("停止录音"))
         }
         .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
@@ -245,15 +262,17 @@ struct ListenPill: View {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("恢复录音"))
             Button { model.endRecording() } label: {
                 Text("停止").font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 12).frame(height: 24)
-                    .background(Capsule().fill(Color(red: 0.184, green: 0.196, blue: 0.227)))
+                    .background(Capsule().stroke(Color.white.opacity(0.6), lineWidth: 1))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .pillButton()
             .accessibilityLabel(L("停止录音"))
         }
         .padding(.leading, 5).padding(.trailing, 4).frame(height: 32)
@@ -284,6 +303,7 @@ struct ListenPill: View {
                         .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .pillButton()
             }
             .foregroundStyle(.white)
             .padding(.leading, 4).padding(.trailing, 4).frame(height: 32)

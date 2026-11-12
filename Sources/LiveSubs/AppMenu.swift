@@ -70,6 +70,7 @@ final class AppMenu: NSObject, NSMenuItemValidation {
         display.addItem(.separator())
         display.addItem(item(L("始终置顶"), #selector(toggleOnTop)))
         display.addItem(item(L("共享屏幕时对方可见"), #selector(toggleCapturable)))
+        display.addItem(item(L("浮动胶囊"), #selector(toggleFloatingPill)))
         add(display, to: main)
 
         // Standard actions with no target go down the responder chain (text fields, selectable text).
@@ -162,6 +163,9 @@ final class AppMenu: NSObject, NSMenuItemValidation {
             return true
         case #selector(toggleCapturable):
             item.state = model.settings.notesCapturable ? .on : .off
+            return true
+        case #selector(toggleFloatingPill):
+            item.state = model.floatingPill.isVisible ? .on : .off
             return true
         case #selector(search):
             return notesWindow.isVisible
@@ -288,6 +292,10 @@ final class AppMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleCapturable() {
         guard let model else { return }
         model.setNotesCapturable(!model.settings.notesCapturable)
+    }
+
+    @objc private func toggleFloatingPill() {
+        model?.floatingPill.toggle()
     }
 
     @objc private func search() { model?.notesWindow.send(.search) }

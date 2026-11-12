@@ -96,6 +96,15 @@ final class AppModel: ObservableObject {
     let loginItem = LoginItem()
     lazy var notes = NotesEngine(ai: ai, store: store)
     lazy var notesWindow = NotesWindowController(model: self)
+    lazy var floatingPill = FloatingPillWindowController(model: self)
+    /// True while the floating pill is on screen. The main window's toolbar pill steps aside
+    /// then, so there is one pill on screen and not two copies of the same state.
+    @Published private(set) var floatingPillVisible = false
+
+    /// The floating pill says it is up or down; the toolbar pill watches.
+    func setFloatingPillVisible(_ on: Bool) {
+        floatingPillVisible = on
+    }
     /// The live words of whichever source is running, in the one shape both are read through.
     let capture = CaptureFeed()
     let sample = SamplePlayer()
@@ -1743,6 +1752,20 @@ final class AppModel: ObservableObject {
                 }
                 w.orderOut(nil)
             }
+        case "floatingPill":
+            // The floating pill on its own: floatingPill:on / :off / :move:x,y / (no arg = state).
+            let p = arg.split(separator: ":", maxSplits: 1).map(String.init)
+            let sub = p.first ?? ""
+            switch sub {
+            case "on": floatingPill.show()
+            case "off": floatingPill.hide()
+            case "move":
+                // move:x,y puts the pill at a spot, to check it can be dragged there.
+                let xy = (p.count > 1 ? p[1] : "").split(separator: ",").compactMap { Double($0) }
+                if xy.count == 2, let w = floatingPill.window { w.setFrameOrigin(NSPoint(x: xy[0], y: xy[1])) }
+            default:
+                debugLog("floating pill visible=\(floatingPill.isVisible) frame=\(String(describing: floatingPill.window?.frame)) toolbarHidden=\(floatingPillVisible) buttons=\(floatingPill.buttonRegions.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" })")
+            }
         case "windowsRender":
             // Every visible window as drawn (<dir>/<n>-<class>.png), without Screen Recording permission.
             for (i, w) in NSApp.windows.enumerated() where w.isVisible {
@@ -1876,6 +1899,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         runningObserver = model.$running.combineLatest(model.updates.$update).sink { [weak self] live, update in
             self?.statusItem.button?.image = BrandImage.menuBar(live: live, badge: update != nil)
         }
+        // Touch the floating pill so it subscribes and can auto-show when a capture starts.
+        _ = model.floatingPill
         let poll = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.model.refreshPermissions() }
         }
