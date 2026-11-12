@@ -653,6 +653,32 @@ final class AppModel: ObservableObject {
         objectWillChange.send()
     }
 
+    /// Picks the interface language; it takes effect the next time the app opens, so offer to
+    /// relaunch right away. Only the relaunch is asked for, the pick is saved either way.
+    func setInterfaceLanguage(_ id: String) {
+        guard InterfaceLanguage.choose(id) else { return }
+        debugLog("interfaceLanguage=\(id)")
+        objectWillChange.send()
+        let alert = NSAlert()
+        alert.messageText = L("界面语言已改为 \(InterfaceLanguage.currentTitle)")
+        alert.informativeText = L("重启应用后生效。现在重启吗？")
+        alert.addButton(withTitle: L("现在重启"))
+        alert.addButton(withTitle: L("稍后自己重启"))
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { restartApp() }
+    }
+
+    /// Quits and reopens the app, like the updater does for an install.
+    private func restartApp() {
+        let url = Bundle.main.bundleURL
+        let script = Process()
+        script.executableURL = URL(fileURLWithPath: "/bin/sh")
+        // Wait for this process to end, then reopen the same bundle.
+        script.arguments = ["-c", "while kill -0 $1 2>/dev/null; do sleep 0.2; done; open \"$2\"", "--", String(getpid()), url.path]
+        try? script.run()
+        NSApp.terminate(nil)
+    }
+
     /// After a meeting: write its notes again in the other language.
     func regenerateNotes(_ id: String, choice: String) {
         notesLanguageFor[id] = choice
@@ -1599,6 +1625,10 @@ final class AppModel: ObservableObject {
                 let name = "\(i)-\(String(describing: type(of: w)).prefix(24)).png"
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg).appendingPathComponent(name))
             }
+        case "interfaceLanguage":
+            // Puts the interface in a language without a restart, for checking the English UI.
+            UserDefaults.standard.set(arg == "system" ? nil : [arg], forKey: "AppleLanguages")
+            debugLog("interfaceLanguage=\(InterfaceLanguage.current)")
         case "notesState": debugLog("notes state=\(notes.state) topics=\(notes.notes.topics.count) covered=\(notes.notes.covered) glossary=\(notes.glossary.count) timedPoints=\(notes.notes.topics.reduce(0) { $0 + ($1.pointTimes?.compactMap { $0 }.count ?? 0) })/\(notes.notes.topics.reduce(0) { $0 + $1.points.count }) fresh=\(notes.fresh.count)")
         case "aiSimulate", "lingSimulate":
             // Every failure the settings page can show, so each state can be looked at.
