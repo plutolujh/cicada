@@ -172,10 +172,39 @@
 - 固定语种：`RecordEngine.heardLanguage` + `AppModel.recordHeardLang`
   （UserDefaults `recordHeardLang`，默认 `auto`），不用等语言探测。
 
+## 本轮：录音用会议那一套实时纪要（2026-11-12）
+
+用户看完录音页后说：**「系统已经有的实时纪要界面，录本地机器播放的声音识别已经很完善了，
+只要这个界面可以支持麦克风录音就可以」**。
+
+也就是说：不要再做一套并行的总结，**录音直接驱动会议那套 `NotesEngine`**。
+
+### 改了什么
+
+1. **录音接上 `NotesEngine`** — `AppModel.startRecording()` 里 `notes.begin(session.id)`，
+   `endRecording()` 里 `notes.finish()`（最后一遍全文纪要）。
+   `NotesEngine` 本来就只读 `store.session(id).lines`，怎么听进去的它不关心。
+2. **录音页右栏换成会议那套** — 删掉 `RecordEngine.topics` / `summarizing` /
+   `maybeSummarize` / `refreshSummary` / `parse` / `fishbone`（约 120 行），
+   改成直接渲染 `NotesContentView`：总结、议题、结论、待办、人名术语、鱼骨图。
+   `RecordTopic` 结构体也删了——`NoteTopic` 取代它。
+3. **录完的转场** — 新文件 `RecordSaving.swift`（存了什么）+ `RecordSavingView.swift`
+   （怎么显示）。录音结束 → 一张卡盖在录音页上，`录音音频 / 原文 / 翻译 / 纪要`
+   四块依次落位 → 2.2 s 后自动切到那条会议记录（`mainShow = "<id>,notes"`，
+   侧栏滑走、详情滑入）。
+4. **入口分清** — 顶部标签「会议」→「会议记录」、「录音」→「麦克风录音」，
+   主窗口右上角加「听系统声音」按钮（走新的 `openPanel`，只开不关）。
+
+### 验证
+
+- 录音 4 句 → 会议记录里：标题、总结、议题（带 4 分支鱼骨图）、结论 2 条、术语 4 个、
+  `mic.m4a` 在。
+- 转场卡 OCR 读出「已保存到会议记录」「查看会议记录」「原文 / 翻译 / 纪要」。
+- `scripts/test.sh` — 70 tests in 12 suites（删掉了 4 个测已删解析器的用例）。
+- `python3 scripts/strings.py` — 883 keys, 0 missing / 0 unused / 0 TODO（en/ja/ko）。
+
 ## 待办 / 已知缺口
 
-- **翻译语言没有选择器**：`recordTarget` 只能在「不翻译」和「我的语言」之间切，
-  没有明确的语言列表可选。
 - **固定语种没有界面**：`recordHeardLang` 只能靠 debug 命令 `recordLang:<code>` 设，
   还没有选择器。
 - **真人验收**：麦克风授权、真人音色、BlackHole 安装仍需一个人来测。
@@ -184,3 +213,72 @@
   所以真人对话的验收还是要人来。
 - **断句**：zh-CN 模型在本机不把两句话切成两行（两句 → 一行），
   断句行为要真人说话才能判。
+
+---
+
+## 本轮：界面语言 + 修掉 `finish` 的真 bug
+
+### 用户要的
+
+用户跑过一轮英文界面后问：**「哪里可以切换成中文呢？需要有个地方设置界面语言的功能」**。
+
+之前没有这个设置——界面只跟着系统语言走，想换只能靠启动参数
+（`-AppleLanguages "(en)"`）或 `defaults write`。
+
+### 改了什么
+
+1. **新文件 `InterfaceLanguage.swift`** — 界面语言的选择和读写。
+   走 macOS 认的那把钥匙：`AppleLanguages` 写在应用自己的 UserDefaults 里，
+   「跟随系统」就是把钥匙删掉。`current` 是「有挑就挑，没挑就系统」。
+2. **设置页加一行** — `LanguageSettings.swift` 顶上多一组「界面」，
+   `界面语言` → `PillMenu`：跟随系统 / 简体中文 / English / 日本語 / 한국어。
+   一行灰字：「应用的菜单和页面用哪种语言」。
+3. **挑完要重启才生效** — SwiftUI 不能热换本地化，所以
+   `AppModel.setInterfaceLanguage(_:)` 存好以后弹一个 `NSAlert`：
+   「界面语言已改为 X / 重启应用后生效。现在重启吗？」→ 「现在重启」就
+   `restartApp()`（`/bin/sh` 等本进程退出再 `open` 同一个 bundle，和 Updater 一样的手法）。
+4. **调试命令** `interfaceLanguage:<code|system>` — 改 `AppleLanguages` 不用重启，
+   方便查英文界面（`system` 是删钥匙）。
+
+### 顺手修掉一个真 bug
+
+`AudioFileWriter.finish(_:)` 的并发守卫有个洞：新起的那个 `Task` **没有被 await**——
+`let waiting: Task? = lock.withLock { ... return nil }` 里新建任务时返回 `nil`，
+后面 `await waiting?.value` 就什么也没等。也就是 `finish` 是「发射后不管」的，
+调用方拿到手时 `.m4a` 往往还没生成。
+
+这不只是测试的问题：应用里 `store.end()` 和录音器都会调 `finish`，
+录音刚结束就去读文件的话会读不到。改成把任务本身返回出来、**总是 await 它**：
+
+```swift
+let task: Task<Void, Never> = lock.withLock {
+    if let running = rewrites[key] { return running }
+    let task = Task { await rewrap(url, until: until); lock.withLock { rewrites[key] = nil } }
+    rewrites[key] = task
+    return task
+}
+await task.value
+```
+
+### 测试
+
+`Tests/LiveSubsTests/AudioFileTests.swift` 原来用 `AVAudioFile` 写 Int16 PCM 到 `.aac`
+路径——`AVAssetExportSession` 的 passthrough 不认，rewrap 必然失败，所以那个用例一直红。
+改成用 `AudioFileWriter.open`（和录音器同一个入口）写真的 ADTS AAC，
+`aFinishedFileIsNeverTakenAway` 也改成「先 rewrap 出真的 `.m4a`，再放一个残留的 partial」。
+
+### 验证
+
+- `scripts/test.sh` — **72 tests in 13 suites 全绿**（连跑 5 次，不再飘）。
+- 英文界面 OCR 读出 `Interface / Interface language / English`；
+  中文界面读出「界面 / 界面语言 / 应用的菜单和页面用哪种语言 / 简体中文」；
+  日文界面读出「表示 / 表示言語」。
+- 挑「日本語」→ 重启 → 界面变日文；挑「跟随系统」→ 钥匙被删 → 回到中文。
+- 录音实测：zh-CN 识别 1 句 → `mic.m4a` 是合法的 AAC-LC（10.05 s），
+  `session.json` 里有 1 行原文、1 个议题、一段总结。
+- `python3 scripts/strings.py` — 892 keys, 0 missing / 0 unused / 0 TODO（en/ja/ko）。
+
+### 待办
+
+- **会议记录回收站**（用户要：「删除的会议记录需要有个回收站，防止删错」）——还没做。
+- 真人验收仍然需要人：麦克风授权、真人音色分人、zh-CN 断句。

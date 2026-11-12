@@ -99,6 +99,9 @@ final class AppModel: ObservableObject {
     var openMainWindow: (() -> Void)?
     var openSettingsWindow: (() -> Void)?
     var showPanel: (() -> Void)?
+    /// Opens the menu bar panel, leaving it open if it already is: the main window's button
+    /// means "show me the listener", not "flip the listener".
+    var openPanel: (() -> Void)?
 
     private var lineForSegment: [Int: String] = [:]
     private var lineCounter = 0
@@ -482,6 +485,9 @@ final class AppModel: ObservableObject {
             self?.recordRewrite()
         }
         recorder.start()
+        // The recording drives the same live notes as a meeting: the notes window, the summary
+        // panel and the saved record are one thing, however the words were heard.
+        notes.begin(session.id)
         refresh()
     }
 
@@ -498,7 +504,48 @@ final class AppModel: ObservableObject {
         // store is not asked to do it again, or the two would race and the second one would
         // take the finished file away.
         store.end()
+        // One last pass over the whole recording, so the saved record reads like a finished
+        // meeting: the full notes, not the quick ones.
+        notes.finish()
         refresh()
+        // What was saved is shown for a moment, so the recording does not simply vanish into
+        // the meeting list.
+        showSaving(id)
+    }
+
+    /// The passage from a finished recording to the meeting record: what went in, and where it
+    /// went.
+    private func showSaving(_ id: String) {
+        guard let s = store.session(id) else { return }
+        let translated = s.lines.contains { $0.dst?.isEmpty == false }
+        let saving = RecordSaving(sessionID: id,
+                                   title: s.displayTitle,
+                                   duration: s.duration,
+                                   lines: s.lines.count,
+                                   translated: translated,
+                                   notes: ai.hasKey && !s.lines.isEmpty,
+                                   hasAudio: s.hasAudio)
+        withAnimation(.easeOut(duration: 0.25)) {
+            recordSaving = saving
+        }
+        // The passage is short: it says what happened and then gets out of the way, into the
+        // meeting the recording became.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                if self.recordSaving?.sessionID == id { self.recordSaving = nil }
+            }
+            self.openSavedMeeting()
+        }
+    }
+
+    /// The meeting the finished recording became, opened in the records window.
+    func openSavedMeeting() {
+        guard let id = recordSaving?.sessionID ?? recordSessionID else { return }
+        withAnimation(.easeInOut(duration: 0.3)) {
+            recordSaving = nil
+        }
+        mainShow = "\(id),notes"
+        openMainWindow?()
     }
 
     /// A settled sentence goes into the meeting record, so the recording can be read, exported
@@ -532,6 +579,7 @@ final class AppModel: ObservableObject {
                            dst: $0.translation, srcLang: $0.lang, dstLang: target, voice: $0.voice)
         })
     }
+
     /// The menu (⌘R) and the panel switch: a meeting with lines is ended only after asking, with
     /// "继续记录" as the default so a stray Return keeps it going. An empty one just stops.
     func requestStop() {
@@ -715,6 +763,10 @@ final class AppModel: ObservableObject {
     var target: String { recordTarget == "none" ? settings.myLanguage : recordTarget }
 
     // MARK: Recording settings
+
+    /// The recording that is being put into the meeting list: the moment of saving, shown as a
+    /// short passage rather than a sudden jump.
+    @Published private(set) var recordSaving: RecordSaving?
 
     /// The language the recording translates into; "none" leaves the sentences as they were said.
     @Published var recordTarget: String {
@@ -1309,7 +1361,7 @@ final class AppModel: ObservableObject {
         case "mainShow": mainShow = arg
         case "recordRender":
             // The recording surface drawn offscreen, for checking it without a person at the mic.
-            let host = NSHostingView(rootView: RecordView(engine: recorder, model: self)
+            let host = NSHostingView(rootView: RecordView(engine: recorder, model: self, notes: notes)
                 .frame(width: 1180, height: 720))
             let w = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 1180, height: 720),
                              styleMask: .borderless, backing: .buffered, defer: false)
@@ -1324,10 +1376,55 @@ final class AppModel: ObservableObject {
                 }
                 w.orderOut(nil)
             }
+        case "recordSaving":
+            // The passage from a finished recording to the meeting record, drawn offscreen so it
+            // can be looked at without stopping a recording in front of the user.
+            let id = recordSessionID ?? store.sessions.first?.id ?? ""
+            let s = store.session(id)
+            let saving = RecordSaving(sessionID: id,
+                                      title: s?.displayTitle ?? "会议记录",
+                                      duration: s?.duration ?? 0,
+                                      lines: s?.lines.count ?? 0,
+                                      translated: s?.lines.contains { $0.dst?.isEmpty == false } ?? false,
+                                      notes: true,
+                                      hasAudio: s?.hasAudio ?? false)
+            // The parts land one after another, so the picture is taken after they have all
+            // landed.
+            let host = NSHostingView(rootView: ZStack {
+                Color.white
+                RecordSavingView(saving: saving) {}
+            }
+            .frame(width: 1180, height: 720))
+            let w = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 1180, height: 720),
+                             styleMask: .borderless, backing: .buffered, defer: false)
+            w.isReleasedWhenClosed = false
+            w.contentView = host
+            w.orderFront(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                host.layoutSubtreeIfNeeded()
+                if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: rep)
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg))
+                    debugLog("record: saving rendered")
+                }
+                w.orderOut(nil)
+            }
         case "recordDemo":
             // Fills the recorder with sample lines and a summary, so the surface can be looked at
             // without a microphone.
             recorder.demo()
+        case "recordCauses":
+            // Fills the recorder with a talk about why something happened, so the fishbone the
+            // notes draw for such a topic can be checked.
+            recorder.demoCauses()
+            if let id = recordSessionID ?? store.liveID {
+                notes.begin(id)
+                Task { await notes.replay(id) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                debugLog("record: causes topics=\(self.notes.notes.topics.count) "
+                    + self.notes.notes.topics.map { "\($0.title) fish=\($0.fishbone?.branches.count ?? 0)" }.joined(separator: ","))
+            }
         case "recordWords":
             // The words of the sentence being heard, with the moment each was said.
             let words = recorder.liveWords.map { "\($0.text)@\(String(format: "%.1f", $0.t))" }
@@ -1368,6 +1465,11 @@ final class AppModel: ObservableObject {
             // recordDisplay:<original|translated|bilingual>: what the transcript shows.
             recorder.display = RecordEngine.Display(rawValue: arg) ?? .bilingual
             debugLog("record: display=\(recorder.display.rawValue)")
+        case "recordTarget":
+            // recordTarget:<code|none>: the language the sentences are translated into.
+            recordTarget = arg.isEmpty ? "none" : arg
+            recorder.target = recordTarget
+            debugLog("record: target=\(recordTarget)")
         case "recordLang":
             // recordLang:<code>: fixes the language the recording is made in, so a test does
             // not have to wait for the detector to make up its mind.
@@ -1386,6 +1488,10 @@ final class AppModel: ObservableObject {
             debugLog("record: state=\(recorder.state) elapsed=\(Int(recorder.elapsed)) lines=\(recorder.lines.count) "
                 + "live=\(recorder.live.prefix(30)) lang=\(recorder.lang?.locale ?? "-") problem=\(recorder.problem ?? "-") "
                 + "level=\(String(format: "%.3f", recorder.level)) words=\(recorder.liveWords.count)")
+        case "recordScope":
+            // The levels the scope draws, so the shape can be checked without a person at the mic.
+            let levels = recorder.waveform.map { String(format: "%.2f", $0) }
+            debugLog("record: scope \(levels.count): \(levels.joined(separator: " "))")
         case "recordVoices":
             // Who the recorder has heard: the number each voice is shown under.
             let voices = recorder.lines.filter { $0.person != nil }
@@ -1430,13 +1536,16 @@ final class AppModel: ObservableObject {
                 : AudioDevices.inputs().first { $0.name.localizedCaseInsensitiveContains(arg) }
             debugLog("record: input=\(recorder.inputDevice?.name ?? "default")")
         case "recordSummary":
-            // Rebuilds the summary from the demo lines with the real service, to check the
+            // Rebuilds the notes from the demo lines with the real service, to check the
             // prompt and the JSON it answers with.
             recorder.demo()
-            Task { await recorder.refreshSummary(force: true) }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                debugLog("record: summary topics=\(self.recorder.topics.count) "
-                    + self.recorder.topics.map { "\($0.title)(\($0.points.count))" }.joined(separator: ","))
+            if let id = recordSessionID ?? store.liveID {
+                notes.begin(id)
+                Task { await notes.replay(id) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+                debugLog("record: summary topics=\(self.notes.notes.topics.count) "
+                    + self.notes.notes.topics.map { "\($0.title)(\($0.points.count)) fish=\($0.fishbone != nil)" }.joined(separator: ","))
             }
         case "mainRender":
             // The main window as drawn, for checking it without Screen Recording permission.
@@ -1600,6 +1709,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         model.openMainWindow = { [weak self] in self?.showMainWindow() }
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
+        model.openPanel = { [weak self] in self?.openPopover() }
         model.openOnboarding = { [weak self] in self?.showOnboarding() }
         runningObserver = model.$running.combineLatest(model.updates.$update).sink { [weak self] live, update in
             self?.statusItem.button?.image = BrandImage.menuBar(live: live, badge: update != nil)
@@ -1696,11 +1806,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            model.refreshOutputs()
-            model.refresh()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            openPopover()
         }
+    }
+
+    /// Shows the panel, or leaves it where it is: the caller asked to see it, not to flip it.
+    private func openPopover() {
+        guard let button = statusItem.button, !popover.isShown else { return }
+        model.refreshOutputs()
+        model.refresh()
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     // MARK: Main window

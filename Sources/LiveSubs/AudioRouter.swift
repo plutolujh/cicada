@@ -282,7 +282,35 @@ enum AudioFileWriter {
     /// It is safe to call twice: the second call finds no partial and leaves the finished file
     /// alone. A file that is already there is never taken away, because a rewrap that failed
     /// would otherwise leave the recording with nothing at all.
+    ///
+    /// It is safe to call twice **at the same time** as well: the rewrap of one file happens
+    /// once, however many callers ask for it. Two rewrites of one file at once would race over
+    /// the same output, and the loser would fail with "cannot create file" and take the
+    /// partial with it.
     nonisolated static func finish(_ url: URL, until: Double? = nil) async {
+        // The rewrap of one file happens once; the others wait for it and then find nothing
+        // left to do.
+        let key = url.path
+        let task: Task<Void, Never> = lock.withLock {
+            if let running = rewrites[key] { return running }
+            let task = Task {
+                await rewrap(url, until: until)
+                // The place is free again: a later rewrap of the same file may start.
+                lock.withLock { rewrites[key] = nil }
+            }
+            rewrites[key] = task
+            return task
+        }
+        // Wait for it: the caller wants the .m4a to be there when this returns.
+        await task.value
+    }
+
+    /// The rewraps in flight, by file. A second caller waits for the first one.
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var rewrites: [String: Task<Void, Never>] = [:]
+
+    /// The rewrap itself: the partial becomes the .m4a.
+    private static func rewrap(_ url: URL, until: Double?) async {
         let src = partial(url)
         guard FileManager.default.fileExists(atPath: src.path) else { return }
         // A file that is already finished is kept: the partial next to it is the leftover of a

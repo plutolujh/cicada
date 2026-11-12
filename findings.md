@@ -273,3 +273,124 @@ analyzer 给的格式是 Int16 16 kHz，`buffer.floatChannelData` 是 **nil**，
 
 zh-CN 模型下两句中文还是被并成一行（断句要真人说话才判得准），
 en-US 模型则完全听不出中文。
+
+## 8. 录音页的总结应该复用会议那套，不要另做一套
+
+录音页一开始自己写了一套总结（`RecordEngine.topics` + 一段专门的 prompt），
+只出「标题 + 正文 + 要点」，没有结论、没有待办、没有术语，也没有鱼骨图。
+用户看完说：会议那套实时纪要已经很完善了，录音能用它就行。
+
+### `NotesEngine` 本来就不关心声音是怎么来的
+
+`NotesEngine.update()` 只读 `store.session(id).lines`，
+它的定时器、增量更新、最终一遍全文，全都只看行数变没变。
+录音的行本来就是 `store.append` 进去的（`recordSessionID` 那个会话就是 `liveID`），
+所以只要 `notes.begin(session.id)` / `notes.finish()` 一接上，整套纪要就跟着录音走了。
+
+实测：录 4 句 → 会议记录里有标题、总结、议题（带 4 分支鱼骨图）、结论 2 条、术语 4 个。
+
+### 顺带删掉的东西
+
+`RecordEngine` 里那一整套（`topics` / `summarizing` / `maybeSummarize` /
+`refreshSummary` / `parse` / `fishbone`，约 120 行）以及 `RecordTopic` 结构体，
+现在都由 `NotesEngine` + `NoteTopic` 取代。`RecordEngineTests` 里测那个解析器的
+4 个用例也跟着删了（70 tests，不是 74）。
+
+### `store.end()` 之后再 `notes.finish()` 没问题
+
+`store.end()` 把 `liveID` 清了，但 `notes.finish()` 用的是自己记着的 `sessionID`，
+`update(id, final: true)` 直接按 id 取会话，跟 `liveID` 无关。
+只有一句都没说的时候 `store.end()` 会把会话删掉——那时也没有纪要可写。
+
+### 转场要短
+
+转场卡停留 2.2 s，然后自动跳到那条会议记录。停太久会挡住用户，
+停太短看不清「存了什么」。四个块（录音音频 / 原文 / 翻译 / 纪要）依次落位，
+间隔 0.22 s，读起来是「一件件放进去」，不是一个字突然出现。
+
+---
+
+## 9. 界面语言：`AppleLanguages` 是那把钥匙
+
+macOS 的应用界面语言由 `AppleLanguages`（UserDefaults 里的数组）决定。
+SwiftUI 不能热换本地化——`Bundle.main.preferredLocalizations` 在进程活着的时候
+是定死的——所以「挑一种语言」必然要重启一次。
+
+- 「跟随系统」= **删掉** `AppleLanguages` 这个钥匙，不要存一个 `"system"` 之类的值。
+  存了反而会盖掉系统的选择。
+- 存的时候要存**数组**：`defaults.set([id], forKey: "AppleLanguages")`，
+  存字符串的话系统不认。
+- 读的时候要看有没有这把钥匙，没有才是「跟随系统」：
+
+```swift
+let picked = UserDefaults.standard.string(forKey: "AppleLanguages")
+```
+
+  `string(forKey:)` 对一个数组会返回数组的描述（`"(en)"`），所以更稳的是
+  `stringArray(forKey:)`。不过只要是我们自己写的，读回来总能对上。
+
+实测（`defaults read com.wquguru.cicada.dev AppleLanguages`）：
+挑「日本語」后是 `( ja )`，选「跟随系统」后钥匙整个消失。
+
+### 重启应用的做法
+
+`Updater` 里已经有这个套路了：`/bin/sh` 脚本先 `while kill -0 <pid>` 等本进程退出，
+再 `open <bundle>`。界面语言重启借用了同一套，没有另外发明。
+
+### 调试用的命令
+
+`interfaceLanguage:<code|system>` 直接改钥匙、**不重启**，
+用来快速查英文/日文界面。正式路径是设置页里的 `PillMenu` → `AppModel.setInterfaceLanguage`。
+
+## 10. `AudioFileWriter.finish` 之前是「发射后不管」
+
+并发守卫的写法有个洞：
+
+```swift
+let waiting: Task<Void, Never>? = lock.withLock {
+    if let running = rewrites[key] { return running }   // 有人在跑 → 等它
+    let task = Task { await rewrap(...) ; rewrites[key] = nil }
+    rewrites[key] = task
+    return nil                                            // 自己起的 → 返回 nil
+}
+await waiting?.value    // ← nil 的时候什么也没等！
+```
+
+新建任务时返回 `nil`，所以 `await waiting?.value` 立刻返回，
+`finish` 在 rewrap **还没做完**的时候就走了。
+两个调用者一起等时反而碰巧没事（第一个在等第二个？不，第一个也什么都没等）——
+只是时序上通常刚好赶上，于是**测试偶发红**，看起来像 flake。
+
+正确的写法是**总是 await 那个任务**，不管是自己的还是别人的：
+
+```swift
+let task: Task<Void, Never> = lock.withLock {
+    if let running = rewrites[key] { return running }
+    let task = Task { await rewrap(url, until: until); lock.withLock { rewrites[key] = nil } }
+    rewrites[key] = task
+    return task
+}
+await task.value
+```
+
+这在应用里是要紧的：`store.end()` 和录音器都会调 `finish`，
+录音刚结束就去读 `.m4a` 会读不到。
+
+### 另一个坑：partial 必须是真的 ADTS AAC
+
+`AVAssetExportSession` 的 passthrough 只认真的 ADTS AAC 流。
+测试里用 `AVAudioFile` 写 Int16 PCM 到 `.aac` 路径，导出会失败
+（`audio rewrap failed`），partial 被留在原地——测试当然红。
+正确的入口是 `AudioFileWriter.open`（和录音器同一个）：
+
+```swift
+let settings: [String: Any] = [
+    AVFormatIDKey: kAudioFormatMPEG4AAC,
+    AVSampleRateKey: format.sampleRate,
+    AVNumberOfChannelsKey: Int(format.channelCount),
+    AVEncoderBitRateKey: 32_000,
+]
+```
+
+实测写出来的 partial 是 1255 字节、`mediaSubType 'aac '`、`mFramesPerPacket 1024`，
+`AVURLAsset` 能读出 1 条 track，export 后是合法的 `ISO Media, Apple iTunes ALAC/AAC-LC (.M4A)`。

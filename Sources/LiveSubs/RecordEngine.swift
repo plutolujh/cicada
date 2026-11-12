@@ -37,15 +37,6 @@ struct RecordLine: Identifiable, Equatable {
     var words: [LiveWord] = []
 }
 
-/// A piece of the running summary: a heading and what was said under it.
-struct RecordTopic: Identifiable, Equatable {
-    var id: String { title }
-    var title: String
-    var detail: String
-    /// The lines this topic covers, so the summary can be rebuilt from them.
-    var points: [String]
-}
-
 /// The numbers the people of a recording are shown under: 人物 1, 人物 2, 人物 3…
 ///
 /// The numbers follow the order the voices were first heard, so a person keeps their number
@@ -95,8 +86,6 @@ final class RecordEngine: ObservableObject {
     @Published private(set) var liveWords: [LiveWord] = []
     /// The sentences that are settled.
     @Published private(set) var lines: [RecordLine] = []
-    /// The summary, rebuilt as the recording goes on.
-    @Published private(set) var topics: [RecordTopic] = []
     /// The language heard in the last sentence.
     @Published private(set) var lang: Lang?
     /// How long the recording has run.
@@ -104,10 +93,10 @@ final class RecordEngine: ObservableObject {
     @Published private(set) var state: State = .idle
     /// The level of the microphone right now, 0…1, for the meter.
     @Published private(set) var level: Float = 0
+    /// The last few seconds of level, for the scope: the newest sample is last.
+    @Published private(set) var waveform: [Float] = []
     /// Why the recording stopped early, when it did.
     @Published private(set) var problem: String?
-    /// True while the summary is being rebuilt, so the panel can show it is working.
-    @Published private(set) var summarizing = false
 
     /// How the transcript shows each sentence: as it was said, translated, or both.
     enum Display: String, CaseIterable, Equatable {
@@ -200,9 +189,6 @@ final class RecordEngine: ObservableObject {
     private var nextDetectionAt = 20.0
     /// The language the recording was confirmed to be in.
     private var confirmed = false
-    private var lastSummaryAt = Date.distantPast
-    private var lastSummaryLineCount = 0
-    private var summaryTask: Task<Void, Never>?
 
     // MARK: Start / stop
 
@@ -213,8 +199,9 @@ final class RecordEngine: ObservableObject {
         live = ""
         liveWords = []
         lines = []
-        topics = []
         elapsed = 0
+        level = 0
+        waveform = []
         heard = []
         clip = []
         clipSeconds = 0
@@ -225,8 +212,6 @@ final class RecordEngine: ObservableObject {
         nextLineID = 0
         generation += 1
         startedAt = Date()
-        lastSummaryAt = .distantPast
-        lastSummaryLineCount = 0
         lastDetectionAt = .distantPast
         detecting = false
         nextDetectionAt = 20.0
@@ -254,8 +239,6 @@ final class RecordEngine: ObservableObject {
         generation += 1
         tickTimer?.invalidate()
         tickTimer = nil
-        summaryTask?.cancel()
-        summaryTask = nil
         stopMic()
         resultsTask?.cancel()
         resultsTask = nil
@@ -491,7 +474,24 @@ final class RecordEngine: ObservableObject {
             let first = clip.removeFirst()
             clipSeconds -= Double(first.frameLength) / first.format.sampleRate
         }
-        levelPeak = max(levelPeak, min(1, rms(of: buffer) * 12))
+        // The scale is a curve, not a multiply: a multiply either sends ordinary speech to the
+        // top of the range or leaves it too small to see, and the scope then says nothing about
+        // how loud the room is. The curve lifts the quiet speech into view and keeps the loud
+        // moments from flattening into one.
+        levelPeak = max(levelPeak, Self.meter(rms(of: buffer)))
+    }
+
+    /// Turns the loudness of a buffer into a level for the scope, 0…1.
+    ///
+    /// The reference is the loudness of speech at a normal distance from the microphone: a tenth
+    /// of the full scale. Around it the curve is steep enough to show the difference between
+    /// words, and it flattens near the top so a shout does not become a bar as tall as the box.
+    static func meter(_ rms: Float) -> Float {
+        guard rms > 0 else { return 0 }
+        let dB = 20 * log10(rms)
+        // -60 dB is silence, -10 dB is loud speech; anything above stays at the top.
+        let t = (dB + 60) / 50
+        return min(1, max(0, t))
     }
 
     /// How loud a buffer is, whatever shape it is in: the analyzer's format is Int16, so the
@@ -549,9 +549,14 @@ final class RecordEngine: ObservableObject {
         elapsed = Date().timeIntervalSince(startedAt)
         level = levelPeak
         levelPeak = 0
+        // The scope shows the last few seconds: one sample per tick, so about four seconds.
+        waveform.append(level)
+        if waveform.count > Self.scopeSamples { waveform.removeFirst(waveform.count - Self.scopeSamples) }
         maybeDetectLanguage()
-        maybeSummarize()
     }
+
+    /// How many samples the scope keeps: ten ticks a second, so forty is four seconds.
+    static let scopeSamples = 40
 
     // MARK: The results
 
@@ -839,106 +844,6 @@ final class RecordEngine: ObservableObject {
         }
     }
 
-    // MARK: The summary
-
-    /// The running summary: the same service the notes use, asked for a short list of topics.
-    /// It is rebuilt from everything said so far, so it never contradicts itself.
-    ///
-    /// It is not asked more often than it can answer: a summary that takes ten seconds is worth
-    /// less than one that keeps up.
-    private func maybeSummarize() {
-        // The tick runs ten times a second, so the count is checked first: nothing is logged
-        // until there is something new to say.
-        guard lines.count != lastSummaryLineCount else { return }
-        guard let ai, ai.usable else {
-            debugLog("record: summary skipped ai=\(self.ai != nil) usable=\(self.ai?.usable.description ?? "-") lines=\(lines.count)")
-            return
-        }
-        guard !lines.isEmpty else { return }
-        let since = Date().timeIntervalSince(lastSummaryAt)
-        guard lastSummaryAt == .distantPast ? lines.count >= 3 : (since >= 45 && lines.count - lastSummaryLineCount >= 3) else { return }
-        // The count is claimed here, not in the task: the tick would otherwise ask again on the
-        // next frame and cancel the request that is still on its way.
-        lastSummaryLineCount = lines.count
-        lastSummaryAt = Date()
-        debugLog("record: summary asking (\(lines.count) lines)")
-        summaryTask?.cancel()
-        summaryTask = Task { [weak self] in
-            await self?.refreshSummary()
-        }
-    }
-
-    /// Rebuilds the summary from everything said so far.
-    func refreshSummary(force: Bool = false) async {
-        guard let ai, ai.usable, !lines.isEmpty else {
-            debugLog("record: summary refresh skipped ai=\(self.ai != nil) usable=\(self.ai?.usable.description ?? "-") lines=\(lines.count)")
-            return
-        }
-        if force { summaryTask?.cancel() }
-        summarizing = true
-        defer { summarizing = false }
-        // The count and the time are claimed when the request is made; a forced refresh claims
-        // them here, because it was not asked for by the tick.
-        if force {
-            lastSummaryAt = Date()
-            lastSummaryLineCount = lines.count
-        }
-
-        // The person who said each line is named when the voice is known, so the summary can
-        // say who said what.
-        let transcript = lines.map { l in
-            let who = l.person.map { "人物 \($0): " } ?? ""
-            return "[\(Self.clock(l.t))] \(who)\(l.text)"
-        }.joined(separator: "\n")
-        let language = TranslationService.englishName(heard.first ?? "zh-CN")
-        let prompt = """
-        You summarize a recording that is still running.
-        Write the summary in \(language).
-        The transcript names the speakers as 人物 1, 人物 2…; say who said what when it matters.
-        Output JSON only: {"topics":[{"title":"...","detail":"...","points":["..."]}]}
-        Use at most 6 topics. Each title is a short heading (a few words). Each detail is one or two
-        sentences about what was said under it. Each point is one short line of what was actually
-        said. Do not invent anything that was not said.
-        """
-        let content = prompt + "\n\nTranscript so far:\n" + transcript
-        do {
-            let raw = try await ai.chat(content: content, instruction: "Update the summary. Output JSON only.",
-                                        priority: .notes, json: true, maxTokens: 2000, timeout: 45)
-            guard let next = Self.parse(raw) else {
-                debugLog("record: summary unparsed (\(raw.count) chars)")
-                return
-            }
-            topics = next
-            debugLog("record: summary \(next.count) topics")
-        } catch {
-            debugLog("record: summary failed \(error)")
-        }
-    }
-
-    /// The topics out of the model's JSON.
-    nonisolated static func parse(_ raw: String) -> [RecordTopic]? {
-        var text = raw
-        // The model may answer with prose around the JSON, so the braces are picked out. The
-        // closing brace has to come after the opening one, or there is no JSON to read; the
-        // offsets are used rather than the indices, because indices from two separate searches
-        // do not always describe one range.
-        if let open = text.firstIndex(of: "{"), let close = text.lastIndex(of: "}"), close > open {
-            let end = text.index(after: close)
-            text = String(text[open..<end])
-        }
-        guard let data = text.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let arr = root["topics"] as? [[String: Any]] else { return nil }
-        let out = arr.compactMap { item -> RecordTopic? in
-            let title = (item["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !title.isEmpty else { return nil }
-            let detail = (item["detail"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let points = (item["points"] as? [String])?.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty } ?? []
-            return RecordTopic(title: title, detail: detail, points: points)
-        }
-        return out.isEmpty ? nil : out
-    }
-
     /// "02:26", the way a recording's clock reads.
     nonisolated static func clock(_ t: Double) -> String {
         let total = Int(t.rounded())
@@ -947,8 +852,7 @@ final class RecordEngine: ObservableObject {
 
     /// Fills the recorder with sample lines and a summary, so the surface can be looked at
     /// without a microphone (debug).
-    func demo() {
-        // The voices are given too, so the people can be seen on the surface without a microphone.
+    func demo() {        // The voices are given too, so the people can be seen on the surface without a microphone.
         let sample: [(Double, String, String?, Int, Int)] = [
             (15, "你觉得你自己的欲望是什么？", "What do you think your own desire is?", 0, 1),
             (21, "这是个好问题。", "That's a good question.", 1, 2),
@@ -960,17 +864,6 @@ final class RecordEngine: ObservableObject {
             RecordLine(id: "d\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN",
                        voice: s.3, person: s.4, end: s.0 + 4)
         }
-        topics = [
-            RecordTopic(title: "人物身份确认",
-                        detail: "钱程（David）来自科沃斯机器人，现任科沃斯机器人 CEO，是 90 后、曾为中国最年轻 A 股上市公司 CEO。",
-                        points: ["David 确认自己 1990 年出生于深圳，11 岁前都在深圳生活，曾在纽约度过三年时间。"]),
-            RecordTopic(title: "个人状态分享",
-                        detail: "个人欲望与状态分析：钱程表示自己曾因拥有较多未主动拼搏厮杀，自身拼搏欲望是被环境激发的，认为人是环境的动物。",
-                        points: ["谈到战斗时表示享受拼尽全力的厮杀。"]),
-            RecordTopic(title: "当前正在聊…",
-                        detail: "说话人3表达对 David 成长经历的好奇，提及 David 为深圳出生长大，并非苏州出身。",
-                        points: []),
-        ]
         live = "所以我觉得"
         liveWords = "所以我觉得".enumerated().map { i, c in
             LiveWord(id: i, text: String(c), t: 146 + Double(i) * 0.2, confidence: nil)
@@ -978,6 +871,25 @@ final class RecordEngine: ObservableObject {
         elapsed = 146
         lang = sourceLanguages.first { $0.code == "zh-CN" }
         debugLog("record: demo filled \(lines.count) lines")
+    }
+
+    /// Fills the recorder with a talk about why something happened, so the fishbone the summary
+    /// draws for such a topic can be checked without a microphone (debug).
+    func demoCauses() {
+        let sample: [(Double, String, String?, Int, Int)] = [
+            (10, "我们这个项目为什么最后没做成？", "Why did our project not get done in the end?", 0, 1),
+            (24, "第一个原因是需求一直不清楚，从立项到改了三版，谁都没拍板。", "The first reason is the requirements were never clear; from kickoff to three rewrites, nobody made the final call.", 1, 2),
+            (48, "第二个原因是关键的人力一直没到位，两个后端拖了两个月才招到。", "The second reason is the key people were never in place; two backend engineers took two months to hire.", 0, 1),
+            (76, "第三个原因是依赖的上游接口一直没有测试环境，我们本地跑不通。", "The third reason is the upstream interface we depend on never had a test environment, so we could not run it locally.", 1, 2),
+            (104, "所以复盘下来，这三件事其实是同一个问题：没有人对结果负责。", "So looking back, these three things are really one problem: nobody was accountable for the outcome.", 0, 1),
+        ]
+        lines = sample.enumerated().map { i, s in
+            RecordLine(id: "c\(i)", t: s.0, text: s.1, translation: s.2, lang: "zh-CN",
+                       voice: s.3, person: s.4, end: s.0 + 5)
+        }
+        elapsed = 130
+        lang = sourceLanguages.first { $0.code == "zh-CN" }
+        debugLog("record: demo causes filled \(lines.count) lines")
     }
 }
 

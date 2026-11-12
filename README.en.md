@@ -58,7 +58,9 @@ Every session saves its bilingual transcript, notes, and audio recording on your
 
 ### Recording and transcription
 
-The main window has a "录音" surface: talk to the microphone and the left column writes down what you said, line by line, while the right column keeps a summary going. The language is detected for you, so there is nothing to choose first, and switching languages mid-sentence no longer loses the sentence. Each line can be translated into a language you read as it arrives. Several people talking are told apart: every line is marked Person 1, Person 2, and the label changes when the voice does, so the summary can say who said what. Recognition runs entirely on this Mac, so the audio is never uploaded; only translation and the summary use your AI service. The recording and the transcript stay on the Mac together, like a meeting record, and can be reopened and exported.
+The main window has a "麦克风录音" (microphone recording) surface: talk to the microphone and the left column writes down what you said, line by line, while the right column is the same live notes a meeting gets — a summary, the topics, the conclusions, the to-dos and the names and terms you used, written as you talk, with a fishbone diagram for a topic that discusses why something happened. The language is detected for you, so there is nothing to choose first, and switching languages mid-sentence no longer loses the sentence. Each line can be translated as it arrives: pick a language from "翻译成" — Chinese to English, English to Chinese, or leave it untranslated. Several people talking are told apart: every line is marked Person 1, Person 2, and the label changes when the voice does, so the notes can say who said what. Recognition runs entirely on this Mac, so the audio is never uploaded; only translation and the notes use your AI service.
+
+A finished recording does not just stop: Cicada shows you what went into the meeting record — the audio, the original words, the translation and the notes, one after another — and then opens that meeting record, where you can read it, search it and export it. A small waveform on the control bar shows how loudly the microphone is hearing you, with the total recording time beside it.
 
 The words appear as you speak them, one by one, with the newest one in orange, so you do not have to wait for a whole sentence. Correct a line with the pencil beside it, merge two short ones, split a long one in two, and the fixed version goes into the meeting record too. A play button next to each line plays the recording back from that moment. Above the transcript you can switch between the original, the translation, or both, and the recording exports to Markdown, Word, or SRT subtitles from the top right.
 
@@ -124,7 +126,7 @@ Pick a service under **Settings › AI Service**. Each one keeps its own key on 
 
 ## Requirements & Installation
 
-Requires **macOS 26 or later** on **Apple silicon**. The UI is available in English, Chinese, Japanese, and Korean, following your macOS language or set per app in **System Settings › General › Language & Region**.
+Requires **macOS 26 or later** on **Apple silicon**. The UI is available in English, Chinese, Japanese, and Korean, following your macOS language by default; change it anytime in **Settings › Language › Interface language** (it applies after a restart).
 
 Download `Cicada-<version>-macOS-AppleSilicon.dmg` from [Releases](https://github.com/wquguru/cicada/releases/latest) or [the website](https://cicada.indaloop.app), open it, and drag **Cicada** into **Applications**. Builds are ad-hoc signed and not notarized yet (see [roadmap](#roadmap)), so if macOS blocks the first launch, open **System Settings › Privacy & Security** and click **Open Anyway**. Each release includes `checksums.txt`, which you can verify with `shasum -a 256 Cicada-*.dmg`. For questions, reach out to the author [@wquguru](https://x.com/wquguru) on X.
 

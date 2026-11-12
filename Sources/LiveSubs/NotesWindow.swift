@@ -550,6 +550,8 @@ struct NotesWindowView: View {
             }
         case .rateLimited:
             notice(L("请求过于频繁，稍后会自动重试。纪要停留在 \(NotesEngine.clock(lastCovered))。"), tint: Palette.fill) { EmptyView() }
+        case .quota:
+            notice(L("套餐额度用完了，纪要停留在 \(NotesEngine.clock(lastCovered))。等额度刷新后继续。"), tint: Palette.fill) { EmptyView() }
         case .failed:
             notice(L("这轮没整理好，下一轮会自动重试。"), tint: Palette.fill) { EmptyView() }
         default:
@@ -571,13 +573,18 @@ struct NotesWindowView: View {
         .background(RoundedRectangle(cornerRadius: 12).fill(tint))
     }
 
+    /// The service the notes go to, as the settings page shows it.
+    private var serviceName: String {
+        model.ai.currentProvider?.displayName ?? model.settings.aiService.displayName
+    }
+
     private var keyEntry: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("生成纪要需要 API key").font(.system(size: 15, weight: .bold))
-            Text("文字记录仍在正常保存。填入 Ling 的 key 后，会从头开始整理整场会议的内容。")
+            Text(L("文字记录仍在正常保存。填入 \(serviceName) 的 key 后，会从头开始整理整场会议的内容。"))
                 .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(2)
             HStack(spacing: 8) {
-                SecureField("sk-…", text: $keyDraft)
+                SecureField(model.ai.currentProvider?.keyPlaceholder ?? "sk-…", text: $keyDraft)
                     .textFieldStyle(.plain).font(.system(size: 13, design: .monospaced))
                     .padding(.horizontal, 10).frame(height: 34)
                     .background(RoundedRectangle(cornerRadius: 9).fill(Color.white))
@@ -585,10 +592,10 @@ struct NotesWindowView: View {
                     .onSubmit(saveKey)
                 SoftButton(L("保存并开始"), dark: true, action: saveKey)
             }
-            Button("获取 Ling key ↗") {
-                if let url = URL(string: "https://chat.ant-ling.com/platform/api") { NSWorkspace.shared.open(url) }
+            if let url = model.ai.currentProvider?.keyURL {
+                Button(L("获取 \(serviceName) key ↗")) { NSWorkspace.shared.open(url) }
+                    .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.secondary)
             }
-            .buttonStyle(.plain).font(.system(size: 12)).foregroundStyle(Palette.secondary)
         }
         .padding(16)
         .background(RoundedRectangle(cornerRadius: 16).fill(Palette.raised))
@@ -598,8 +605,8 @@ struct NotesWindowView: View {
         let k = keyDraft
         keyDraft = ""
         Task {
-            await model.ling.setKey(k)
-            if model.ling.usable { model.notes.updateNow() }
+            await model.ai.setKey(k)
+            if model.ai.usable { model.notes.updateNow() }
         }
     }
 

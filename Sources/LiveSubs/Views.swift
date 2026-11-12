@@ -618,12 +618,23 @@ struct MainWindowView: View {
             }
             VStack(spacing: 0) {
                 surfaceSwitch
-                if surface == "record" {
-                    RecordView(engine: model.recorder, model: model)
-                } else {
-                    detail
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // The two sides swap with a slide, so a finished recording reads as
+                // becoming a meeting rather than as one screen replacing another.
+                ZStack {
+                    if surface == "record" {
+                        RecordView(engine: model.recorder, model: model, notes: model.notes)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .trailing).combined(with: .opacity),
+                                removal: .move(edge: .trailing).combined(with: .opacity)))
+                    } else {
+                        detail
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .leading).combined(with: .opacity),
+                                removal: .move(edge: .leading).combined(with: .opacity)))
+                    }
                 }
+                .clipped()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { detailWidth = $0 }
@@ -635,15 +646,31 @@ struct MainWindowView: View {
             selection = id
             tab = parts.count > 1 ? parts[1] : "notes"
             if parts.count > 2 { view = parts[2] }
+            // A meeting that is being shown comes up on the meeting side, not on the
+            // recording side: the recording is over, and what it became is what is read.
+            if surface == "record" { surface = "meetings" }
         }
     }
 
     /// 会议 / 录音: the two things the records window does.
     private var surfaceSwitch: some View {
         HStack(spacing: 18) {
-            surfaceButton(L("会议"), id: "meetings")
-            surfaceButton(L("录音"), id: "record")
+            surfaceButton(L("会议记录"), id: "meetings")
+            surfaceButton(L("麦克风录音"), id: "record")
             Spacer()
+            // A quick way to open the listening panel from here: the panel is the native surface
+            // for "listen to system audio", but users expect to find it from the main window too.
+            Button { model.openPanel?() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "waveform.and.magnifyingglass").font(.system(size: 11))
+                    Text(L("听系统声音")).font(.system(size: 12))
+                }
+                .foregroundStyle(Palette.secondary)
+                .padding(.horizontal, 10).frame(height: 26)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Palette.fill))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(Self.hairline).frame(height: 1) }

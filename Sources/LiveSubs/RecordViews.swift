@@ -10,6 +10,8 @@ import SwiftUI
 struct RecordView: View {
     @ObservedObject var engine: RecordEngine
     @ObservedObject var model: AppModel
+    /// The notes engine the recording drives: the same one a meeting does.
+    @ObservedObject var notes: NotesEngine
 
     /// The language the sentences are translated into; "none" leaves them as they were said.
     private var target: String { model.recordTarget }
@@ -34,6 +36,13 @@ struct RecordView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(Color.white)
+        .overlay {
+            // The passage from the recording to the meeting record.
+            if let saving = model.recordSaving {
+                RecordSavingView(saving: saving) { model.openSavedMeeting() }
+                    .transition(.opacity)
+            }
+        }
         .onAppear {
             // The engine is also wired when the recording starts, so these are for a recording
             // that is already running when the surface comes up.
@@ -66,18 +75,53 @@ struct RecordView: View {
             chips
             displayPicker
             exportButton
+            scope
+            clock
             recordButton
         }
         .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+
+    /// The scope: how loud the microphone hears you right now.
+    private var scope: some View {
+        RecordScope(levels: engine.waveform, live: engine.state == .recording)
+    }
+
+    /// How long the recording has been running.
+    private var clock: some View {
+        RecordClock(elapsed: engine.elapsed, live: engine.state == .recording)
     }
 
     /// The three switches, each one saying what it does rather than what it is.
     private var chips: some View {
         HStack(spacing: 8) {
             chip("自动识别", icon: "waveform.badge.magnifyingglass", on: autoLang) { model.recordAutoLang.toggle() }
-            chip(translationLabel, icon: "character.bubble", on: target != "none") { toggleTranslation() }
+            translationChip
             chip("保留音频", icon: "waveform", on: keepsAudio) { model.recordKeepsAudio.toggle() }
         }
+    }
+
+    /// The language the sentences go into. A menu, not a switch: recording in Chinese and reading
+    /// in English is as ordinary as the other way round, and the sentence's own language is only
+    /// known while it is being heard.
+    private var translationChip: some View {
+        Menu {
+            ForEach(targetOptions, id: \.id) { o in
+                Button(o.title) { model.recordTarget = o.id }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "character.bubble").font(.system(size: 11))
+                Text(translationLabel).font(.system(size: 12))
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(target == "none" ? Palette.secondary : Palette.accentInk)
+            .padding(.horizontal, 9).frame(height: 26)
+            .background(RoundedRectangle(cornerRadius: 8).fill(target == "none" ? Palette.fill : Palette.accentPale))
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.button).buttonStyle(.plain).menuIndicator(.hidden).fixedSize()
+        .help(L("录音翻译成哪种语言"))
     }
 
     /// The chip says which language the sentences go into, or that they stay as they were said.
@@ -376,17 +420,19 @@ struct RecordView: View {
         return out
     }
 
-    // MARK: Right — the running summary
+    // MARK: Right — the live notes
 
+    /// The same notes a meeting gets: the summary, the topics, the conclusions and the
+    /// fishbone, written by the same service and read the same way.
     private var right: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("实时总结").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
+                Text("实时纪要").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
                 Spacer(minLength: 0)
-                if engine.summarizing {
+                if notes.state == .updating {
                     Text("正在更新…").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
-                } else if !engine.topics.isEmpty {
-                    Button { Task { await engine.refreshSummary(force: true) } } label: {
+                } else if !notes.notes.isEmpty {
+                    Button { notes.updateNow() } label: {
                         Image(systemName: "arrow.clockwise").font(.system(size: 11))
                     }
                     .buttonStyle(.plain).foregroundStyle(Palette.secondary).help(L("重新总结"))
@@ -397,56 +443,52 @@ struct RecordView: View {
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    if engine.topics.isEmpty {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(engine.lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
-                                .font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                            if !engine.lines.isEmpty {
-                                Text("总结由 AI 服务整理，需要在设置里填好服务 key。")
-                                    .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
-                            }
+                if notes.notes.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(engine.lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
+                            .font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                        if !engine.lines.isEmpty {
+                            Text("纪要由 AI 服务整理，需要在设置里填好服务 key。")
+                                .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
                         }
-                        .padding(.top, 24)
                     }
-                    ForEach(engine.topics) { topic in
-                        topicView(topic)
-                    }
+                    .padding(.top, 24)
+                } else {
+                    NotesContentView(notes: notes.notes, fresh: notes.fresh, live: recording,
+                                     updating: notes.state == .updating,
+                                     summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
+                                     coveredUntil: coveredUntil,
+                                     endedAt: endedAt)
+                        .padding(.horizontal, 20).padding(.vertical, 16)
                 }
-                .padding(.horizontal, 20).padding(.vertical, 16)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.never)
         }
     }
 
-    private func topicView(_ topic: RecordTopic) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(topic.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink)
-            if !topic.detail.isEmpty {
-                Text(topic.detail).font(.system(size: 13)).foregroundStyle(Palette.body)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            ForEach(Array(topic.points.enumerated()), id: \.offset) { _, point in
-                HStack(alignment: .top, spacing: 7) {
-                    Text("•").font(.system(size: 12)).foregroundStyle(Palette.tertiary)
-                    Text(point).font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    /// The recording is still going.
+    private var recording: Bool { engine.state == .recording || engine.state == .preparing }
+    /// The time of the last line the notes cover ("到 03:52").
+    private var coveredUntil: Double? {
+        guard notes.notes.covered > 0 else { return nil }
+        let lines = model.store.session(notes.shownID ?? "")?.lines ?? []
+        guard notes.notes.covered <= lines.count else { return nil }
+        return lines[notes.notes.covered - 1].t
+    }
+    /// Where the last topic ends, once the recording has stopped.
+    private var endedAt: Double? {
+        guard !recording else { return nil }
+        return model.store.session(notes.shownID ?? "")?.lines.last?.t
     }
 
     // MARK: The translation target
 
-    private func toggleTranslation() {
-        if target == "none" {
-            // The language the user reads, which is the one the notes are written in.
-            model.recordTarget = model.settings.myLanguage
-            if model.recordTarget == "none" { model.recordTarget = "zh-CN" }
-        } else {
-            model.recordTarget = "none"
-        }
+    /// The languages a recording can be translated into, with the one in use marked.
+    ///
+    /// The list is the same one the rest of the app uses, so a sentence heard in Chinese can go
+    /// into English and one heard in English can go into Chinese, and both read the way the
+    /// reader expects rather than as a bare code.
+    private var targetOptions: [(id: String, title: String)] {
+        [("none", L("不翻译"))] + targetLanguages.map { ($0.code, $0.name) }
     }
 }

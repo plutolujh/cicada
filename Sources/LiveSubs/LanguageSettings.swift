@@ -10,6 +10,13 @@ struct LanguageSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             route
+            group(L("界面")) {
+                SettingsRow(title: L("界面语言"), detail: L("应用的菜单和页面用哪种语言"), divider: false) {
+                    PillMenu(value: InterfaceLanguage.currentTitle, options: InterfaceLanguage.offered) {
+                        model.setInterfaceLanguage($0)
+                    }
+                }
+            }
             group(L("听对方")) {
                 SettingsRow(title: L("对方说的语言"), detail: heardDetail) {
                     PillMenu(value: heardValue, options: [("auto", L("自动识别"))] + sourceLanguages.map { ($0.locale, $0.name) }) {
