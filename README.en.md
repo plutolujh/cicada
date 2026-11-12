@@ -64,6 +64,8 @@ A finished recording does not just stop: Cicada shows you what went into the mee
 
 The words appear as you speak them, one by one, with the newest one in orange, so you do not have to wait for a whole sentence. Correct a line with the pencil beside it, merge two short ones, split a long one in two, and the fixed version goes into the meeting record too. A play button next to each line plays the recording back from that moment. Above the transcript you can switch between the original, the translation, or both, and the recording exports to Markdown, Word, or SRT subtitles from the top right.
 
+Need a break? Press Pause: the microphone stays open (the level meter keeps moving) but no new sentences are written down and the clock stops. Press Resume to carry on, and Stop — the separate button beside it — is what actually ends the recording. Listening to the system audio pauses and resumes the same way, and the menu has a command for each.
+
 ## Privacy & Permissions
 
 Audio capture, language detection, speech recognition (Apple SpeechAnalyzer), and meeting recordings all stay on your Mac. The only data that leaves your device is the recognized text sent for translation and meeting notes, plus the short audio clips you speak while holding the talk key when using a Ling API key. Without an API key, subtitles, translation (via Google with Apple on-device fallback), meeting records, and push-to-talk interpreting all work. Live meeting notes need your own API key, from Ling (Ant Group's model service), MiniMax or any OpenAI-compatible endpoint (see [below](#ai-services)), and an hour of live notes costs roughly ¥0.15 to ¥1 at current Ling pricing. Ling gives ¥10 of credit every month, enough for about 10 to 50 hours of meetings.
