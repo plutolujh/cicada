@@ -21,11 +21,18 @@ final class SystemAudioTap {
     private var monoFormat: AVAudioFormat?
     private var renderBuffer: AVAudioPCMBuffer?
 
-    static func defaultOutputDevice() -> AudioObjectID? {
+    /// The device the system plays sound out of. On a Mac set up with a loopback (BlackHole) as
+    /// the default output, this is still the speakers: the loopback is only the hub apps write
+    /// into, not what the user hears.
+    static func defaultSystemOutputDevice() -> AudioObjectID? {
+        device(kAudioHardwarePropertyDefaultSystemOutputDevice)
+    }
+
+    private static func device(_ selector: AudioObjectPropertySelector) -> AudioObjectID? {
         var device = AudioObjectID(kAudioObjectUnknown)
         var size = UInt32(MemoryLayout<AudioObjectID>.size)
         var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
@@ -48,8 +55,7 @@ final class SystemAudioTap {
         return status == noErr && obj != kAudioObjectUnknown ? obj : nil
     }
 
-    private static func defaultOutputUID() -> String? {
-        guard let device = defaultOutputDevice() else { return nil }
+    private static func uid(of device: AudioObjectID) -> String? {
         var uid: CFString = "" as CFString
         var size = UInt32(MemoryLayout<CFString>.size)
         var addr = AudioObjectPropertyAddress(
@@ -64,6 +70,18 @@ final class SystemAudioTap {
         return uid as String
     }
 
+    /// The device to listen to: the one the user hears. When the default output is a loopback
+    /// (BlackHole) that apps write into, the default system output is still the speakers, and
+    /// listening to the loopback would pick up the room: any app that records the microphone and
+    /// plays it into the loopback would come back as system audio. Falls back to the default
+    /// output when there is no separate system output.
+    static func listenDevice() -> AudioObjectID? {
+        let system = defaultSystemOutputDevice()
+        let output = device(kAudioHardwarePropertyDefaultOutputDevice)
+        if let system, system != output { return system }
+        return output ?? system
+    }
+
     private func fail(_ code: Int, _ message: String) -> NSError {
         stop()
         return NSError(domain: "LiveSubsAudio", code: code, userInfo: [NSLocalizedDescriptionKey: message])
@@ -72,9 +90,18 @@ final class SystemAudioTap {
     func start() throws {
         stop()
 
-        // Exclude our own process so the app's spoken translations never
-        // come back in as subtitles.
-        let desc = CATapDescription(stereoGlobalTapButExcludeProcesses: Self.ownProcessObject().map { [$0] } ?? [])
+        guard let listen = Self.listenDevice(), let outputUID = Self.uid(of: listen) else {
+            throw fail(-1, L("找不到默认输出设备"))
+        }
+
+        // Only the audio that goes to the device the user hears, not a mix of everything the
+        // system plays. A global tap also picks up whatever apps write into a loopback device
+        // (BlackHole), and an app that records the room and plays it there would put the sound
+        // of the room into the system audio. Excluding our own process keeps the app's own spoken
+        // translations from coming back as subtitles.
+        let desc = CATapDescription(excludingProcesses: Self.ownProcessObject().map { [$0] } ?? [],
+                                    deviceUID: outputUID,
+                                    stream: 0)
         desc.name = "Cicada"
         desc.isPrivate = true
 
@@ -82,8 +109,6 @@ final class SystemAudioTap {
         var status = AudioHardwareCreateProcessTap(desc, &tap)
         guard status == noErr else { throw fail(Int(status), L("无法创建系统音频 Tap（\(status)）")) }
         tapID = tap
-
-        guard let outputUID = Self.defaultOutputUID() else { throw fail(-1, L("找不到默认输出设备")) }
 
         let aggregateUID = "com.wquguru.cicada.\(UUID().uuidString)"
         let aggregate: [String: Any] = [

@@ -1871,7 +1871,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var mainWindow: NSWindow?
-    private var deviceListener: AudioObjectPropertyListenerBlock?
+    /// Kept alive for the app's life: Core Audio holds the blocks, not the other way round.
+    private var deviceListeners: [AudioObjectPropertyListenerBlock] = []
     private var deviceWork: DispatchWorkItem?
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
@@ -2126,16 +2127,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: Output device changes
 
     private func installDeviceListener() {
-        var addr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.outputDeviceChanged() }
+        // The tap follows the device the user hears (the system output, or the default output
+        // when there is no separate one), so both can change which device it listens to.
+        let selectors: [AudioObjectPropertySelector] = [
+            kAudioHardwarePropertyDefaultOutputDevice,
+            kAudioHardwarePropertyDefaultSystemOutputDevice,
+        ]
+        for selector in selectors {
+            var addr = AudioObjectPropertyAddress(
+                mSelector: selector,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.outputDeviceChanged() }
+            }
+            deviceListeners.append(block)
+            AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
         }
-        deviceListener = block
-        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &addr, DispatchQueue.main, block)
     }
 
     private func outputDeviceChanged() {

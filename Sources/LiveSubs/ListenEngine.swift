@@ -203,14 +203,27 @@ final class ListenEngine {
         debugLog("listen resumed")
     }
 
+    /// Re-opens the tap after the output device changed.
+    ///
+    /// The recognizer is rebuilt with it: the new tap's audio may come at a different rate or
+    /// from a different device, and the analyzer that was fed by the old tap would then either
+    /// stay silent or fail on the format. Swapping the tap alone left the app listening to
+    /// nothing — the meter moved, the words never came.
     func reconnectAudio() {
         guard isRunning else { return }
         audioTap?.stop()
         audioTap = nil
+        // The recognizer waits for the tap: with no tap there is no audio to give it, and a
+        // new one is built as soon as the tap is open again.
+        let lang = activeLang
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             MainActor.assumeIsolated {
                 guard let self, self.isRunning else { return }
-                if self.startTap() { self.setStatus(L("正在听")) }
+                guard self.startTap() else { return }
+                self.setStatus(L("正在听"))
+                if let lang {
+                    Task { await self.switchTranscriber(to: lang) }
+                }
             }
         }
     }
