@@ -14,7 +14,7 @@ struct TranslateAttempt: Codable {
 @MainActor
 final class TranslateTrace {
     var attempts: [TranslateAttempt] = []
-    var lingQueue: Double = 0
+    var aiQueue: Double = 0
     var failedSeconds: Double { attempts.filter { $0.failure != nil }.reduce(0) { $0 + $1.seconds } }
     var via: String { attempts.first(where: { $0.failure == nil })?.provider ?? "none" }
     var fallbacks: [String] { attempts.compactMap { a in a.failure.map { "\(a.provider):\($0)" } } }
@@ -41,8 +41,8 @@ struct SentenceTiming: Codable, Identifiable {
     var total: Double { (recognize ?? 0) + translate }
 }
 
-/// One Ling request.
-struct LingCall: Codable {
+/// One request to an AI service.
+struct AICall: Codable {
     let at: Date
     let priority: String
     let queue: Double
@@ -59,7 +59,7 @@ struct LingCall: Codable {
 @MainActor
 final class Diagnostics: ObservableObject {
     @Published private(set) var sentences: [SentenceTiming] = []
-    @Published private(set) var calls: [LingCall] = []
+    @Published private(set) var calls: [AICall] = []
     @Published private(set) var startedAt: Date?
     /// When the meeting stopped: the header stops counting minutes.
     @Published private(set) var endedAt: Date?
@@ -87,7 +87,7 @@ final class Diagnostics: ObservableObject {
                         s.fallbacks.isEmpty ? "" : " fallbacks=" + s.fallbacks.joined(separator: ",")))
     }
 
-    func record(_ c: LingCall) {
+    func record(_ c: AICall) {
         guard enabled() else { return }
         calls.append(c)
         if calls.count > 1000 { calls.removeFirst(calls.count - 1000) }

@@ -229,7 +229,7 @@ final class SpeakTester: ObservableObject {
     @Published var mode: Mode = .voice
 
     let speak: SpeakEngine
-    let ling: LingClient
+    let ai: AIClient
     let settings: AppSettings
     /// The app's translation chain (for the back-translation without a Ling key).
     var translate: ((_ text: String, _ from: String, _ to: String) async -> String?)?
@@ -243,9 +243,9 @@ final class SpeakTester: ObservableObject {
 
     var busy: Bool { ![.idle, .done].contains(phase) }
 
-    init(speak: SpeakEngine, ling: LingClient, settings: AppSettings) {
+    init(speak: SpeakEngine, ai: AIClient, settings: AppSettings) {
         self.speak = speak
-        self.ling = ling
+        self.ai = ai
         self.settings = settings
     }
 
@@ -448,14 +448,14 @@ final class SpeakTester: ObservableObject {
     /// With a Ling key: one small call that scores whether the meaning survived. Without: the
     /// room's words translated back into the speaker's language, for the user to judge.
     private func judge(original: String, from: String, heard: String, to: String) async -> SpeakTestResult.Meaning {
-        if ling.usable {
+        if ai.usable {
             let content = """
             Original (\(TranslationService.englishName(from))): \(original)
             What the listener heard (\(TranslationService.englishName(to))): \(heard)
             """
             let instruction = "Score from 0 to 100 how faithfully what the listener heard conveys the original's meaning. "
                 + "Reply as JSON: {\"score\": <0-100>, \"issue\": \"<the main problem in at most 12 words of \(TranslationService.englishName(from)), or empty>\"}"
-            if let reply = try? await ling.chat(content: content, instruction: instruction, priority: .translate, json: true,
+            if let reply = try? await ai.chat(content: content, instruction: instruction, priority: .translate, json: true,
                                                 maxTokens: 120, timeout: 10),
                let v = SpeakScore.parseJudge(reply) {
                 return .score(v.score, v.issue)

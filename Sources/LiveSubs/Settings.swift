@@ -88,8 +88,19 @@ final class AppSettings: ObservableObject {
     @Published var speakVoices: [String: String] {
         didSet { save() }
     }
-    /// Ling model for notes and translation.
-    @Published var aiModel: String {
+    /// The AI service the notes and the translation go to.
+    @Published var aiService: AIService {
+        didSet { save() }
+    }
+    /// The model per service, so switching back and forth keeps each one's choice.
+    @Published var aiModels: [String: String] {
+        didSet { save() }
+    }
+    /// The address of the "自定义" service, and the model name that goes with it.
+    @Published var aiBaseURL: String {
+        didSet { save() }
+    }
+    @Published var aiCustomModel: String {
         didSet { save() }
     }
 
@@ -138,7 +149,7 @@ final class AppSettings: ObservableObject {
         // Anyone who had it on before this question existed already knows.
         speakConfirmed = defaults.object(forKey: "speakConfirmed") as? Bool ?? defaults.bool(forKey: "speakEnabled")
         speakFrom = defaults.string(forKey: "speakFrom")
-            ?? speakLocale(forLanguage: LiveSubs.myLanguage(systemLanguages: Locale.preferredLanguages))
+            ?? speakLocale(forLanguage: LiveSubs.myLanguage(systemLanguages: systemLanguages()))
         speakTo = defaults.string(forKey: "speakTo") ?? "room"
         speakOutput = defaults.string(forKey: "speakOutput") ?? ""
         autoSystemMic = defaults.object(forKey: "autoSystemMic") as? Bool ?? true
@@ -149,9 +160,24 @@ final class AppSettings: ObservableObject {
         overlayHideAfter = defaults.object(forKey: "overlayHideAfter") as? Double ?? 4
         talkKey = Shortcut(stored: defaults.string(forKey: "talkKey")) ?? .defaultTalk
         toggleKey = Shortcut(stored: defaults.string(forKey: "toggleKey")) ?? .defaultToggle
-        aiModel = defaults.string(forKey: "aiModel") ?? "Ling-3.1-flash"
+        aiService = defaults.string(forKey: "aiService").flatMap { AIService(rawValue: $0) } ?? .ling
+        var models = defaults.dictionary(forKey: "aiModels") as? [String: String] ?? [:]
+        // Builds before the services were split kept one model name, and it was Ling's.
+        if models.isEmpty, let legacy = defaults.string(forKey: "aiModel") { models[AIService.ling.rawValue] = legacy }
+        // The MiniMax models the app used are gone; the ones the platform still serves take their
+        // place, so a picked name that no longer exists does not break every call.
+        if let picked = models[AIService.minimax.rawValue], !MiniMaxProvider.availableModels.contains(picked) {
+            models[AIService.minimax.rawValue] = MiniMaxProvider.defaultModelName
+        }
+        aiModels = models
+        aiBaseURL = defaults.string(forKey: "aiBaseURL") ?? ""
+        aiCustomModel = defaults.string(forKey: "aiCustomModel") ?? ""
         displayMode = defaults.string(forKey: "displayMode") ?? "notes"
-        speakVoices = defaults.dictionary(forKey: "speakVoices") as? [String: String] ?? [:]
+        speakVoices = (defaults.dictionary(forKey: "speakVoices") as? [String: String] ?? [:]).mapValues { id in
+            // Builds before the services were split wrote Ming's voices as "ming:<id>".
+            guard id.hasPrefix("ming:") else { return Self.renamedVoice(id) }
+            return "ai:\(AIService.ling.rawValue):\(id.dropFirst("ming:".count))"
+        }
         endWithApp = defaults.object(forKey: "endWithApp") as? Bool ?? true
         silenceEnd = defaults.string(forKey: "silenceEnd") ?? "prompt"
         silenceMinutes = defaults.object(forKey: "silenceMinutes") as? Double ?? 10
@@ -181,7 +207,10 @@ final class AppSettings: ObservableObject {
         defaults.set(overlayHideAfter, forKey: "overlayHideAfter")
         defaults.set(talkKey.stored, forKey: "talkKey")
         defaults.set(toggleKey.stored, forKey: "toggleKey")
-        defaults.set(aiModel, forKey: "aiModel")
+        defaults.set(aiService.rawValue, forKey: "aiService")
+        defaults.set(aiModels, forKey: "aiModels")
+        defaults.set(aiBaseURL, forKey: "aiBaseURL")
+        defaults.set(aiCustomModel, forKey: "aiCustomModel")
         defaults.set(displayMode, forKey: "displayMode")
         defaults.set(speakVoices, forKey: "speakVoices")
         defaults.set(endWithApp, forKey: "endWithApp")
@@ -192,21 +221,41 @@ final class AppSettings: ObservableObject {
         defaults.set(speakerVoices, forKey: "speakerVoices")
     }
 
+    /// The model to use for a service: the one the user picked, or the service's own default. A
+    /// pick the service no longer offers (the platform retired the model) falls back too, so the
+    /// app never calls a model that is gone.
+    func aiModel(for service: AIService, fallback: String, allowed: [String] = []) -> String {
+        let picked = aiModels[service.rawValue] ?? ""
+        guard !picked.isEmpty else { return fallback }
+        if !allowed.isEmpty, !allowed.contains(picked) { return fallback }
+        return picked
+    }
+
+    /// A voice the platform renamed: the old id is not on the list any more, so the choice follows
+    /// it to the new name.
+    private static func renamedVoice(_ id: String) -> String {
+        let prefix = "ai:\(AIService.minimax.rawValue):"
+        guard id.hasPrefix(prefix) else { return id }
+        let voice = String(id.dropFirst(prefix.count))
+        guard let fresh = VoiceCatalog.minimaxRenames[voice] else { return id }
+        return prefix + fresh
+    }
+
     /// Target language. "Follow system" translates into my language, or into the next system
     /// language when they speak mine.
     func resolvedTarget(source: String?) -> String {
-        target == "system" ? followSystemTarget(source: source, systemLanguages: Locale.preferredLanguages) : target
+        target == "system" ? followSystemTarget(source: source, systemLanguages: systemLanguages()) : target
     }
 
     /// The reader's own language: the translate-to choice, or with "follow system" the one
     /// `myLanguage(systemLanguages:)` picks. Notes in 我的语言 use it too.
     var myLanguage: String {
-        target == "system" ? LiveSubs.myLanguage(systemLanguages: Locale.preferredLanguages) : target
+        target == "system" ? LiveSubs.myLanguage(systemLanguages: systemLanguages()) : target
     }
 
     /// "简体中文 / English": my language, then what it translates into when they speak mine.
     func systemTargetDescription() -> String {
-        let prefs = Locale.preferredLanguages
+        let prefs = systemLanguages()
         let mine = LiveSubs.myLanguage(systemLanguages: prefs)
         return [mine, followSystemTarget(source: mine, systemLanguages: prefs)].map(targetName).joined(separator: " / ")
     }

@@ -7,7 +7,7 @@ import SwiftUI
 struct VoiceSection: View {
     @ObservedObject var model: AppModel
     @ObservedObject var settings: AppSettings
-    @ObservedObject var ling: LingClient
+    @ObservedObject var ai: AIClient
 
     @State private var tab: String?
     @State private var recording = false
@@ -29,7 +29,7 @@ struct VoiceSection: View {
                 chip
             }
             .padding(.horizontal, 16).padding(.vertical, 8).frame(minHeight: 46)
-            if !ling.usable { keyNudge }
+            if !ai.usable { keyNudge }
             if model.voicePickerOpen { picker.padding(.horizontal, 16).padding(.bottom, 14) }
         }
         .sheet(isPresented: $recording) {
@@ -48,7 +48,7 @@ struct VoiceSection: View {
     private var roomOption: VoiceOption? {
         let id = model.voiceID(for: roomLanguage)
         if id == "clone" { return VoiceCatalog.cloneOption }
-        return VoiceCatalog.options(for: roomLanguage).first { $0.id == id }
+        return VoiceCatalog.options(for: roomLanguage, service: settings.aiService).first { $0.id == id }
     }
 
     private var chip: some View {
@@ -77,17 +77,25 @@ struct VoiceSection: View {
     }
 
     /// "女 · Ming" / "男 · 本机": who it is and where it comes from.
+    ///
+    /// The service's own mark on its voices ("Ming", "MiniMax").
     private func summary(_ v: VoiceOption) -> String {
         switch v.kind {
-        case .ming: return [v.tags.first, "Ming"].compactMap { $0 }.joined(separator: " · ")
+        case .remote: return [v.tags.first, tag(for: v.service)].compactMap { $0 }.joined(separator: " · ")
         case .system: return [v.tags.first, L("本机")].compactMap { $0 }.joined(separator: " · ")
         case .clone: return L("你的音色")
         }
     }
 
+    /// How the service marks its own voices in the list.
+    private func tag(for service: AIService?) -> String {
+        guard let service, let provider = model.ai.provider(for: service) else { return "" }
+        return provider.voiceTag
+    }
+
     private var keyNudge: some View {
         HStack(spacing: 10) {
-            Text("填入 Ling key：声音更自然，还能用你自己的声音").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            Text(L("填入 key：声音更自然，还能用你自己的声音")).font(.system(size: 12)).foregroundStyle(Palette.secondary)
             Spacer(minLength: 6)
             Button("去填写") { model.settingsSection = .ai }.buttonStyle(.plain)
                 .font(.system(size: 12, weight: .semibold)).foregroundStyle(Palette.ink)
@@ -111,7 +119,7 @@ struct VoiceSection: View {
                 }
             }
             VStack(spacing: 0) {
-                ForEach(VoiceCatalog.options(for: language)) { v in
+                ForEach(VoiceCatalog.options(for: language, service: settings.aiService)) { v in
                     row(v)
                     Divider()
                 }
@@ -131,13 +139,13 @@ struct VoiceSection: View {
 
     private func row(_ v: VoiceOption) -> some View {
         let selected = chosen == v.id
-        let usable = !v.needsKey || ling.usable
+        let usable = !v.needsKey || ai.usable
         return Button { if usable { model.setVoice(v.id, for: language) } } label: {
             HStack(spacing: 10) {
                 playButton(v.id, highlighted: selected, enabled: usable) { model.previewVoice(v.id, language: language) }
                 Text(v.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.ink).lineLimit(1)
                     .frame(width: 88, alignment: .leading)
-                Text(usable ? v.tags.prefix(2).joined(separator: " · ") + (v.needsKey ? " · Ming" : "") : L("需要 Ling key"))
+                Text(usable ? v.tags.prefix(2).joined(separator: " · ") + (v.needsKey ? " · \(tag(for: v.service))" : "") : L("需要 key"))
                     .font(.system(size: 12)).foregroundStyle(Palette.secondary).lineLimit(1)
                 Spacer(minLength: 6)
                 Text(v.needsKey ? L("慢约 1 秒") : L("最快")).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
@@ -178,7 +186,7 @@ struct VoiceSection: View {
         let selected = chosen == "clone"
         HStack(spacing: 10) {
             if has {
-                playButton("clone", highlighted: selected, enabled: ling.usable) { model.previewVoice("clone", language: language) }
+                playButton("clone", highlighted: selected, enabled: canClone) { model.previewVoice("clone", language: language) }
             } else {
                 ZStack {
                     Circle().fill(Palette.accentPale)
@@ -207,11 +215,11 @@ struct VoiceSection: View {
             }
             Spacer(minLength: 6)
             if has {
-                Button { if ling.usable { model.setVoice("clone", for: language) } } label: { Radio(on: selected) }
-                    .buttonStyle(.plain).disabled(!ling.usable)
+                Button { if canClone { model.setVoice("clone", for: language) } } label: { Radio(on: selected) }
+                    .buttonStyle(.plain).disabled(!canClone)
                     .accessibilityLabel(L("用我自己的声音"))
             } else {
-                SoftButton(L("录制")) { recording = true }.disabled(!ling.usable)
+                SoftButton(L("录制")) { recording = true }.disabled(!canClone)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
@@ -223,8 +231,11 @@ struct VoiceSection: View {
         return own == current ? L("最像你") : L("会带你的口音")
     }
 
+    /// Only the services that can clone the user's voice offer it.
+    private var canClone: Bool { ai.usable && (ai.currentProvider?.canClone ?? false) }
+
     private var footnote: String {
-        ling.usable ? L("Ling 不可用时自动换成本机声音") : L("填入 Ling key 后可用 Ming 声音和你自己的声音")
+        ai.usable ? L("服务不可用时自动换成本机声音") : L("填入 key 后可用更自然的声音和你自己的声音")
     }
 }
 
@@ -351,8 +362,8 @@ struct VoiceCloneSheet: View {
                 }
             }
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(Palette.line, lineWidth: 1))
-            if !model.ling.usable {
-                Text("需先在“AI 服务”中填入 Ling key，才能使用你自己的声音。").font(.system(size: 12)).foregroundStyle(Palette.error)
+            if !model.ai.usable || !(model.ai.currentProvider?.canClone ?? false) {
+                Text(L("需先在“AI 服务”中填入可用的 key，才能使用你自己的声音。")).font(.system(size: 12)).foregroundStyle(Palette.error)
             }
             Text("听起来不像或有杂音？换个安静的地方重录一次。录音仅保存在本机，可随时删除。")
                 .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
@@ -404,14 +415,14 @@ struct VoiceCloneSheet: View {
     }
 
     private func playClone() {
-        guard model.ling.usable, let data = try? Data(contentsOf: recorder.url) else { return }
+        guard model.ai.usable, let data = try? Data(contentsOf: recorder.url) else { return }
         clonePlaying = true
         let ref = (audio: "data:audio/wav;base64," + data.base64EncodedString(), text: recorder.transcript)
-        let lang = VoiceCatalog.mingLanguage(for: language)
-        let ling = model.ling
+        let lang = VoiceCatalog.key(for: language)
+        let ai = model.ai
         Task {
             await model.speak.speak(VoiceCatalog.sample(for: language), language: language, device: AudioDevices.defaultOutput,
-                                    route: .stream { text in ling.speech(text, voice: nil, reference: ref, language: lang) })
+                                    route: .stream { text in ai.speech(text, voice: "", reference: ref, language: lang) })
             clonePlaying = false
         }
     }

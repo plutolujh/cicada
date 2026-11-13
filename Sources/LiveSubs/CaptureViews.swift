@@ -21,9 +21,16 @@ struct CaptureView: View {
     @State private var picked: CaptureSource = .system
     /// The source the surface shows: the one that is running, or the one that was picked when
     /// nothing runs. The toolbar pill and this surface therefore always show the same thing.
+    ///
+    /// The engine state is the immediate source of truth for the microphone: it changes the
+    /// instant the recording starts, pauses or stops, so the surface and the toolbar pill see
+    /// the same state without waiting for the capture feed's 0.1s tick.
     private var source: CaptureSource {
         if engine.state == .recording || engine.state == .preparing || engine.state == .paused {
             return .mic
+        }
+        if model.running {
+            return .system
         }
         return picked
     }
@@ -76,6 +83,8 @@ struct CaptureView: View {
     private var left: some View {
         VStack(alignment: .leading, spacing: 0) {
             sourceSwitch
+            Rectangle().fill(MainWindowView.hairline).frame(height: 1)
+            titleRow
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
             controls
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
@@ -161,12 +170,64 @@ struct CaptureView: View {
         }
     }
 
+    /// The title of the recording in progress: editable, shown above the controls so it is not
+    /// mixed with the buttons. Only the microphone recording gets a title; system listening
+    /// keeps its fixed label.
+    @State private var titleEdit = ""
+    @State private var editingTitle = false
+
+    private var titleRow: some View {
+        Group {
+            if source == .mic, model.activeRecordingSessionID != nil {
+                HStack(spacing: 8) {
+                    if editingTitle {
+                        TextField(model.recordSessionDisplayTitle, text: $titleEdit)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Palette.ink)
+                            .onSubmit { commitTitle() }
+                        Button("完成") { commitTitle() }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Palette.accent)
+                            .font(.system(size: 12))
+                    } else {
+                        Text(model.recordSessionDisplayTitle)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(Palette.ink)
+                            .lineLimit(1)
+                            .onTapGesture { beginTitleEdit() }
+                        Button { beginTitleEdit() } label: {
+                            Image(systemName: "pencil").font(.system(size: 12))
+                                .foregroundStyle(Palette.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(L("修改标题"))
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 6)
+            }
+        }
+        .onChange(of: model.activeRecordingSessionID) { _, _ in
+            editingTitle = false
+            titleEdit = model.recordSessionDisplayTitle
+        }
+    }
+
+    private func beginTitleEdit() {
+        titleEdit = model.recordSessionDisplayTitle
+        editingTitle = true
+    }
+
+    private func commitTitle() {
+        model.renameRecordingSession(to: titleEdit)
+        editingTitle = false
+    }
+
     // MARK: The controls
 
     private var controls: some View {
         HStack(spacing: 12) {
-            Text(source == .mic ? "新录音" : "系统声音")
-                .font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
             Spacer(minLength: 0)
             chips
             displayPicker

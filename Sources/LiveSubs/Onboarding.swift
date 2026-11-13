@@ -362,7 +362,7 @@ struct OnboardingView: View {
                 switch step {
                 case 1: permissions
                 case 2: tryIt
-                case 3: OnboardingKeyStep(ling: model.ling, settings: settings, skipping: $model.onboardingKeySkip)
+                case 3: OnboardingKeyStep(ai: model.ai, settings: settings, skipping: $model.onboardingKeySkip)
                 case 4: speaking
                 default: closing
                 }
@@ -432,7 +432,7 @@ struct OnboardingView: View {
                     .padding(.horizontal, 24).frame(height: 44)
                     .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.87)))
             case 3:
-                OnboardingKeyFooter(ling: model.ling, skipping: $model.onboardingKeySkip, next: { step = 4 })
+                OnboardingKeyFooter(ai: model.ai, skipping: $model.onboardingKeySkip, next: { step = 4 })
             case 4 where !speakSetupShown:
                 // The two cards above are the choice; nothing to confirm here.
                 EmptyView()
@@ -553,7 +553,7 @@ struct OnboardingView: View {
                 ChoiceRow(label: L("翻译成"), value: targetName(model.listen.resolvedTarget),
                           badge: settings.target == "system" ? L("跟随系统") : nil, options: targetOptions) { model.targetSelection = $0 }
             }
-            OnboardingNotesTeaser(ling: model.ling)
+            OnboardingNotesTeaser(ai: model.ai)
         }
     }
 
@@ -771,10 +771,10 @@ struct OnboardingView: View {
 /// Under the sample video: without a key, a hint that the same words become notes (the next step);
 /// with one, where the subtitle bar can go.
 struct OnboardingNotesTeaser: View {
-    @ObservedObject var ling: LingClient
+    @ObservedObject var ai: AIClient
 
     var body: some View {
-        if ling.hasKey {
+        if ai.hasKey {
             Text("字幕条可任意拖动，拖拽右下角可调整大小。").font(.system(size: 12)).foregroundStyle(Palette.secondary)
         } else {
             HStack(spacing: 16) {

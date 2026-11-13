@@ -437,8 +437,8 @@ struct SettingsView: View {
             case .overlay: overlay
             case .language: LanguageSettings(model: model, settings: settings)
             case .records: records
-            case .ai: AISettingsView(model: model, ling: model.ling, settings: settings)
-            case .diagnostics: DiagnosticsView(diagnostics: model.diagnostics, model: settings.aiModel)
+            case .ai: AISettingsView(model: model, ai: model.ai, settings: settings)
+            case .diagnostics: DiagnosticsView(diagnostics: model.diagnostics, model: model.aiModelName)
             }
         }
         .padding(.leading, 12).padding(.trailing, 28).padding(.top, 40).padding(.bottom, 28)
@@ -507,7 +507,7 @@ struct SettingsView: View {
                         model.objectWillChange.send()
                     }
                 }
-                VoiceSection(model: model, settings: settings, ling: model.ling)
+                VoiceSection(model: model, settings: settings, ai: model.ai)
             }
             if model.virtualMic != nil { micSettings }
         }

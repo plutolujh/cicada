@@ -38,6 +38,17 @@ let targetLanguages: [Lang] = [
     .init(name: "Português", locale: "pt", code: "pt"),
 ]
 
+/// The languages the system is in, without the app's own language choice mixed in.
+///
+/// `Locale.preferredLanguages` already carries the app's own `AppleLanguages` pick, so it
+/// cannot tell the system apart from the language chosen in the settings; reading the global
+/// domain does.
+func systemLanguages() -> [String] {
+    let list = UserDefaults.standard.persistentDomain(forName: "NSGlobalDomain")?["AppleLanguages"] as? [String]
+    if let list, !list.isEmpty { return list }
+    return Locale.preferredLanguages
+}
+
 /// Maps a system language identifier ("zh-Hans-CA", "en-CA", "zh-TW") to a translation code.
 func translationCode(forSystemLanguage id: String) -> String {
     let locale = Locale(identifier: id)

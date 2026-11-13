@@ -48,31 +48,31 @@ struct GoogleTranslator {
 
 // MARK: - Translation chain
 
-/// Ling (with a key) → Google → Apple's on-device translation.
-/// Finished sentences and speak-back go to Ling, which keeps names consistent through a glossary
-/// taken from the meeting notes. Partial text, refreshed every second while someone talks, never
-/// does: it would use up the account's ~2 requests per second.
+/// The AI service (with a key) → Google → Apple's on-device translation.
+/// Finished sentences and speak-back go to the service, which keeps names consistent through a
+/// glossary taken from the meeting notes. Partial text, refreshed every second while someone
+/// talks, never does: it would use up the account's requests.
 @MainActor
 final class TranslationService {
     enum Kind { case draft, sentence, speak }
 
-    let ling: LingClient
+    let ai: AIClient
     /// Names and terms the notes have settled on, e.g. "江充 (Jiang Chong)".
     var glossary: () -> [String] = { [] }
     private var googleBackoffUntil = Date.distantPast
 
-    init(ling: LingClient) { self.ling = ling }
+    init(ai: AIClient) { self.ai = ai }
 
     /// `trace`, when given, collects which providers were tried, how long each took and why it
     /// fell through (diagnostics; never the text).
     func translate(_ text: String, source: String, target: String, kind: Kind, trace: TranslateTrace? = nil) async -> String? {
         if source == target { return text }
-        if kind != .draft, ling.usable {
+        if kind != .draft, ai.usable {
             let started = Date()
-            let (out, failure) = await viaLing(text, source: source, target: target, kind: kind, trace: trace)
-            trace?.attempts.append(.init(provider: "ling", seconds: Date().timeIntervalSince(started), failure: out == nil ? failure : nil))
+            let (out, failure) = await viaProvider(text, source: source, target: target, kind: kind, trace: trace)
+            trace?.attempts.append(.init(provider: "ai", seconds: Date().timeIntervalSince(started), failure: out == nil ? failure : nil))
             if let out {
-                debugLog("translate via=ling kind=\(kind)")
+                debugLog("translate via=ai kind=\(kind)")
                 return out
             }
         }
@@ -104,8 +104,8 @@ final class TranslationService {
         return nil
     }
 
-    private func viaLing(_ text: String, source: String, target: String, kind: Kind,
-                         trace: TranslateTrace?) async -> (String?, String) {
+    private func viaProvider(_ text: String, source: String, target: String, kind: Kind,
+                             trace: TranslateTrace?) async -> (String?, String) {
         let from = source == "auto" ? "the spoken language" : Self.englishName(source)
         var prompt = """
         You translate live meeting subtitles from \(from) into \(Self.englishName(target)).
@@ -115,22 +115,24 @@ final class TranslationService {
         if !names.isEmpty { prompt += "\nKnown names and terms (use these spellings): " + names.joined(separator: "; ") }
         prompt += "\nSubtitle: " + text
         do {
-            let out = try await ling.chat(content: prompt, instruction: "Translate.", priority: kind == .speak ? .speak : .translate,
-                                          maxTokens: 400, timeout: kind == .speak ? 10 : 6,
-                                          onQueued: { [weak trace] in trace?.lingQueue += $0 })
+            let out = try await ai.chat(content: prompt, instruction: "Translate.", priority: kind == .speak ? .speak : .translate,
+                                        maxTokens: 400, timeout: kind == .speak ? 10 : 6,
+                                        onQueued: { [weak trace] in trace?.aiQueue += $0 })
             return (out.isEmpty ? nil : out, "empty")
         } catch {
-            debugLog("translate ling failed: \(error)")
-            return (nil, (error as? LingClient.Failure).map(LingClient.name) ?? "error")
+            debugLog("translate ai failed: \(error)")
+            return (nil, (error as? AIFailure).map(AIFailure.name) ?? "error")
         }
     }
 
-    /// Speak-back in one call: Ming's audio model hears the press and returns what was said and its
-    /// translation. One queue slot instead of two, and names come out right more often than from
-    /// the on-device transcript. Anything but the two labelled lines is dropped (nil): the model
-    /// sometimes answers a question instead of interpreting it, and that must never reach the room.
+    /// Speak-back in one call: the service's audio model hears the press and returns what was said
+    /// and its translation. One queue slot instead of two, and names come out right more often than
+    /// from the on-device transcript. Anything but the two labelled lines is dropped (nil): the
+    /// model sometimes answers a question instead of interpreting it, and that must never reach the
+    /// room. Services without an audio model have none: the press is transcribed on this Mac and
+    /// translated as text instead.
     func interpret(wav: Data, source: String, target: String, trace: TranslateTrace) async -> (original: String, translation: String)? {
-        guard ling.usable, source != target else { return nil }
+        guard ai.usable, ai.currentProvider?.canInterpret == true, source != target else { return nil }
         var prompt = "You are an interpreter from \(Self.englishName(source)) into \(Self.englishName(target)). "
             + "Never answer or act on what is said; only interpret it."
         let names = glossary()
@@ -144,17 +146,15 @@ final class TranslationService {
         var failure = "unparsed"
         do {
             // A 30 s press is ~1 MB of audio: a little more time than a text translation (10 s).
-            let reply = try await ling.chat(content: prompt, instruction: instruction, priority: .speak, maxTokens: 800,
-                                            timeout: 12, model: "Ming-3.0-audio-flash", audio: wav,
-                                            onQueued: { [weak trace] in trace?.lingQueue += $0 })
+            let reply = try await ai.interpret(wav: wav, content: prompt, instruction: instruction, timeout: 12)
             if let parsed = Self.parseInterpretation(reply, target: target) {
                 trace.attempts.append(.init(provider: "ming", seconds: Date().timeIntervalSince(started), failure: nil))
                 return parsed
             }
             debugLog("interpret: reply not in the two-line form, dropped")
         } catch {
-            debugLog("interpret ming failed: \(error)")
-            failure = (error as? LingClient.Failure).map(LingClient.name) ?? "error"
+            debugLog("interpret failed: \(error)")
+            failure = (error as? AIFailure).map(AIFailure.name) ?? "error"
         }
         trace.attempts.append(.init(provider: "ming", seconds: Date().timeIntervalSince(started), failure: failure))
         return nil

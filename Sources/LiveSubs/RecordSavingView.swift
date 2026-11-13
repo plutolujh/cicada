@@ -12,6 +12,9 @@ struct RecordSavingView: View {
     var onOpen: () -> Void = {}
 
     @State private var landed: Set<RecordSaving.Part> = []
+    /// All the parts have landed and the record is complete: only then the user is asked to
+    /// confirm and open the meeting record.
+    @State private var allLanded = false
 
     var body: some View {
         ZStack {
@@ -60,6 +63,8 @@ struct RecordSavingView: View {
                                 .foregroundStyle(.white)
                         }
                         .buttonStyle(.plain)
+                        .disabled(!allLanded)
+                        .opacity(allLanded ? 1 : 0.5)
                     }
                     .padding(.top, 18)
 
@@ -76,10 +81,12 @@ struct RecordSavingView: View {
         }
         .onAppear {
             // The parts land one after another: the reading has a shape, not a jump.
+            let total = saving.parts.count
             for (i, part) in saving.parts.enumerated() {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25 + Double(i) * 0.22) {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                         landed.insert(part)
+                        if landed.count == total { allLanded = true }
                     }
                 }
             }

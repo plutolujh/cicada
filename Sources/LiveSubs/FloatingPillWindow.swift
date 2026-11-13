@@ -60,6 +60,7 @@ final class FloatingPillWindowController: NSObject, NSWindowDelegate {
             // The pill itself is the entire content; no title bar, no extra chrome. The
             // overlay on top of it is what makes the pill draggable.
             let overlay = PillDragOverlay(below: NSView())
+            overlay.onBodyDoubleClick = { [weak model] in model?.toggleMainWindow?() }
             let host = FloatingPillHostingView(rootView: FloatingPillView(model: model) {
                 [weak overlay] regions in
                 overlay?.setButtonRegions(regions)
@@ -126,12 +127,28 @@ private final class FloatingPillPanel: NSPanel {
 /// The pill's body is dragged, the pill's buttons are not. Which is which is decided by the
 /// pill itself: SwiftUI knows where its buttons are, so it tells this view, and a press over a
 /// button is handed straight back to the pill (it becomes a click on the button).
+///
+/// The drag waits for the pointer to move. A press that stands still is a click, and a pair of
+/// clicks is a double click — the pill opens the main window on one. Only once the pointer has
+/// travelled is it a drag, and then the window follows it. That way the whole pair of clicks
+/// reaches the pill and the drag does not swallow it.
 private final class PillDragOverlay: NSView {
     /// The pill's own content, drawn below.
     private weak var below: NSView?
+    /// Toggled when the pill's body is double-clicked: opens or minimises the main window.
+    var onBodyDoubleClick: (() -> Void)?
     /// The rectangles that belong to a button, in the overlay's coordinates. A press inside one
     /// of them belongs to the pill, not to the drag.
     private(set) var buttonRegions: [CGRect] = []
+    /// How far the pointer has to travel before the press becomes a drag.
+    private let dragThreshold: CGFloat = 3
+
+    /// The press that has not turned into a drag yet.
+    private var pendingPress: NSEvent?
+    /// Where the press began, in this view's coordinates.
+    private var pressOrigin: NSPoint = .zero
+    /// Whether the window is being dragged right now.
+    private var dragging = false
 
     init(below: NSView) {
         self.below = below
@@ -161,8 +178,51 @@ private final class PillDragOverlay: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        // AppKit drags the window itself: it follows the pointer exactly, with no lag.
+        // A double click on the body toggles the main window. Buttons never reach the overlay
+        // (hitTest hands them to the pill), so a click here is always on the body.
+        if event.clickCount == 2 {
+            pendingPress = nil
+            dragging = false
+            onBodyDoubleClick?()
+            return
+        }
+        // The press is remembered, not acted on. It becomes a drag when the pointer moves and
+        // a click when it does not, and only the pill can tell the two apart.
+        pendingPress = event
+        pressOrigin = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if !dragging {
+            // The pointer has moved far enough: this is a drag.
+            guard hypot(point.x - pressOrigin.x, point.y - pressOrigin.y) >= dragThreshold else { return }
+            dragging = true
+            pendingPress = nil
+            // AppKit drags the window itself: it follows the pointer exactly, with no lag.
+            window?.performDrag(with: event)
+            return
+        }
         window?.performDrag(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            pendingPress = nil
+            dragging = false
+        }
+        guard !dragging, let press = pendingPress else { return }
+        // The pointer never moved: this is a click, and it belongs to the pill.
+        forwardToPill(press)
+    }
+
+    /// Gives the click to the view below, so the pill sees it.
+    private func forwardToPill(_ event: NSEvent) {
+        guard let below else { return }
+        let point = below.convert(event.locationInWindow, from: nil)
+        guard let target = below.hitTest(point) else { return }
+        target.mouseDown(with: event)
+        target.mouseUp(with: event)
     }
 }
 

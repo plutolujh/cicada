@@ -61,8 +61,8 @@ struct ListenPill: View {
     /// True in the floating panel: the toolbar's own pill steps aside, so there is one pill on
     /// screen, not two copies of the same state.
     var hiddenWhileFloating = false
-    /// Where the pill's buttons are, in the pill's own coordinates. The double click opens the
-    /// main window only on the pill's body: a double click on a button belongs to that button.
+    /// Where the pill's buttons are, in the pill's own coordinates. The model keeps them so a
+    /// test can aim a click at the body between them.
     @State private var buttonRegions: [CGRect] = []
 
     var body: some View {
@@ -91,24 +91,15 @@ struct ListenPill: View {
         .onChange(of: model.ending) { _, p in
             if let p { endingTotal = max(1, p.deadline.timeIntervalSinceNow) }
         }
-        // A double click on the pill's body opens the main window: the pill is small and its
-        // buttons are few, so this is the way back to the records without hunting for the menu.
-        .onTapGesture(count: 2) { location in
-            guard !isOverButton(location) else { return }
-            model.openMainWindow?()
-        }
         .coordinateSpace(name: "PillLocalSpace")
-        .onPreferenceChange(PillLocalButtonRegions.self) { buttonRegions = $0 }
+        .onPreferenceChange(PillLocalButtonRegions.self) {
+            buttonRegions = $0
+            model.toolbarPillRegions = $0
+        }
         .padding(.vertical, 2)
         // A toolbar item keeps the width it was first laid out at: a fixed slot, wide enough for
         // the longest state (the English countdown), with the pill centred in it.
         .frame(width: 420)
-    }
-
-    /// Whether a click at this point landed on one of the pill's buttons. The regions are
-    /// reported in the same coordinate space the tap gives, so they can be compared directly.
-    private func isOverButton(_ location: CGPoint) -> Bool {
-        buttonRegions.contains { $0.contains(location) }
     }
 
     private var idle: some View {
@@ -157,6 +148,8 @@ struct ListenPill: View {
                 .buttonStyle(.plain).pillButton().accessibilityLabel(L("结束会议"))
             Text("正在听").font(.system(size: 13, weight: .semibold))
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent)
+                .onTapGesture(count: 2) { model.toggleMainWindow?() }
+                .help(L("双击打开/最小化会议记录"))
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(TranscriptExport.clock(max(0, model.listenElapsed)))
                     .font(.system(size: 13).monospacedDigit())
@@ -195,6 +188,8 @@ struct ListenPill: View {
             Image(systemName: "pause.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
             Text("已暂停").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent)
+                .onTapGesture(count: 2) { model.toggleMainWindow?() }
+                .help(L("双击打开/最小化会议记录"))
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(TranscriptExport.clock(max(0, model.listenElapsed)))
                     .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
@@ -231,6 +226,8 @@ struct ListenPill: View {
             Image(systemName: "mic.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
             Text("正在录").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent, source: .microphone)
+                .onTapGesture(count: 2) { model.toggleMainWindow?() }
+                .help(L("双击打开/最小化会议记录"))
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(TranscriptExport.clock(max(0, model.recorder.elapsed)))
                     .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
@@ -267,6 +264,8 @@ struct ListenPill: View {
             Image(systemName: "pause.fill").font(.system(size: 16)).foregroundStyle(Palette.accent)
             Text("已暂停").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white)
             LevelMeter(model: model, bars: 8, height: 15, color: Palette.accent, source: .microphone)
+                .onTapGesture(count: 2) { model.toggleMainWindow?() }
+                .help(L("双击打开/最小化会议记录"))
             TimelineView(.periodic(from: .now, by: 1)) { ctx in
                 Text(TranscriptExport.clock(max(0, model.recorder.elapsed)))
                     .font(.system(size: 13).monospacedDigit()).foregroundStyle(.white)
@@ -416,7 +415,7 @@ struct LevelMeter: View {
             switch source {
             case .microphone:
                 // The recorder keeps its own 0…1 level; it is the same number the scope draws.
-                guard model.recorder.state == .recording || model.recorder.state == .paused else { return }
+                guard model.micState == .recording || model.micState == .paused else { return }
                 v = CGFloat(model.recorder.level)
             case .system:
                 guard model.running else { return }

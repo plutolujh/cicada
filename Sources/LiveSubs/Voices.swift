@@ -3,26 +3,34 @@ import Foundation
 
 // MARK: - Catalog
 
-/// A voice the room can hear: one of Ming's (through the Ling key), a voice installed on this Mac,
-/// or the user's own voice cloned from a recording.
+/// A voice the room can hear: one an AI service speaks with (Ming's through Ling, MiniMax's
+/// through MiniMax), a voice installed on this Mac, or the user's own voice cloned from a
+/// recording.
 struct VoiceOption: Identifiable, Equatable {
     enum Kind: Equatable {
-        case ming(String)
+        /// A service's own voice: the service and its voice id.
+        case remote(AIService, String)
         case system(String)
         case clone
     }
-    /// Stored in settings: "ming:US_Emma", "system:<AVSpeechSynthesisVoice identifier>", "clone".
+    /// Stored in settings: "ai:ling:US_Emma", "system:<AVSpeechSynthesisVoice identifier>", "clone".
     let id: String
     let name: String
     let tags: [String]
     let kind: Kind
 
     var needsKey: Bool { if case .system = kind { return false } else { return true } }
+
+    /// The service that speaks this voice, when it is one.
+    var service: AIService? {
+        if case .remote(let service, _) = kind { return service }
+        return nil
+    }
 }
 
-/// Which voices to offer for each language the room may hear. Ming's are hand-picked natural ones
-/// (two women, two men where it has them); for languages it has no native voice for, Emma and
-/// George speak it with `language_id`. The Mac's own best female and male voices follow, so there is
+/// Which voices to offer for each language the room may hear. A service's own voices come first
+/// (Ming's are hand-picked natural ones; for languages it has no native voice for, Emma and George
+/// speak it with `language_id`), then the Mac's own best female and male voices, so there is
 /// always something without a key.
 enum VoiceCatalog {
     /// Tabs in settings: (key, title). The key is the translation code without region ("zh" for zh-CN / zh-TW).
@@ -42,9 +50,19 @@ enum VoiceCatalog {
         return ["ja", "ko", "de", "fr", "es"].contains(k) ? k : nil
     }
 
+    /// A service's own voices for a language.
+    static func remote(for language: String, service: AIService) -> [VoiceOption] {
+        switch service {
+        case .ling: ming(for: language)
+        case .minimax: minimax(for: language)
+        case .custom: []
+        }
+    }
+
     static func ming(for language: String) -> [VoiceOption] {
         func v(_ voice: String, _ name: String, _ tags: [String]) -> VoiceOption {
-            VoiceOption(id: "ming:\(voice)", name: name, tags: tags, kind: .ming(voice))
+            VoiceOption(id: "ai:\(AIService.ling.rawValue):\(voice)", name: name, tags: tags,
+                        kind: .remote(.ling, voice))
         }
         switch key(for: language) {
         case "en":
@@ -78,11 +96,44 @@ enum VoiceCatalog {
         return out
     }
 
-    static func options(for language: String) -> [VoiceOption] { ming(for: language) + system(for: language) }
+    /// MiniMax's own voices. It has a set for Chinese and English; other languages get the Mac's.
+    static func minimax(for language: String) -> [VoiceOption] {
+        func v(_ voice: String, _ name: String, _ tags: [String]) -> VoiceOption {
+            VoiceOption(id: "ai:\(AIService.minimax.rawValue):\(voice)", name: name, tags: tags,
+                        kind: .remote(.minimax, voice))
+        }
+        switch key(for: language) {
+        case "en":
+            return [v("English_Graceful_Lady", L("优雅女声"), [L("女"), L("自然")]),
+                    v("English_Trustworthy_Man", L("沉稳男声"), [L("男"), L("稳重")]),
+                    v("Serene_Woman", L("温和女声"), [L("女"), L("平稳")])]
+        case "zh":
+            return [v("Chinese (Mandarin)_Warm_Girl", L("温暖女声"), [L("女"), L("自然")]),
+                    v("Chinese (Mandarin)_Gentleman", L("温润男声"), [L("男"), L("稳重")]),
+                    v("Chinese (Mandarin)_News_Anchor", L("男主播"), [L("男"), L("播报")]),
+                    v("female-shaonv", L("少女音"), [L("女"), L("清亮")]),
+                    v("male-qn-qingse", L("青年男声"), [L("男"), L("自然")])]
+        default:
+            return []
+        }
+    }
 
-    /// What a language uses until the user picks: Ming's first voice with a key, else the Mac's.
-    static func defaultID(for language: String, hasKey: Bool) -> String? {
-        (hasKey ? ming(for: language).first : nil)?.id ?? system(for: language).first?.id
+    /// The MiniMax voices the app used before, and what they are called now: the old ids are not
+    /// on the platform's list any more.
+    static let minimaxRenames: [String: String] = [
+        "English_Crispy_Girl": "English_Graceful_Lady",
+        "English_Trusty_Man": "English_Trustworthy_Man",
+        "English_Warm_Woman": "Serene_Woman",
+        "presenter_male_f6": "Chinese (Mandarin)_News_Anchor",
+    ]
+
+    static func options(for language: String, service: AIService) -> [VoiceOption] {
+        remote(for: language, service: service) + system(for: language)
+    }
+
+    /// What a language uses until the user picks: the service's first voice with a key, else the Mac's.
+    static func defaultID(for language: String, service: AIService, hasKey: Bool) -> String? {
+        (hasKey ? remote(for: language, service: service).first : nil)?.id ?? system(for: language).first?.id
     }
 
     static let cloneOption = VoiceOption(id: "clone", name: L("我自己的声音"), tags: [], kind: .clone)

@@ -74,6 +74,9 @@ final class AppModel: ObservableObject {
         }
     }
     @Published var systemAudioOK = false
+    /// The microphone recording's state, mirrored from the engine so the toolbar pill can
+    /// watch it: the engine is a `lazy var`, so `model.recorder.state` would not notify anyone.
+    @Published private(set) var micState: RecordEngine.State = .idle
     @Published var micStatus: AVAuthorizationStatus = AVCaptureDevice.authorizationStatus(for: .audio)
     @Published var liveSource = ""
     @Published var liveTranslation = ""
@@ -102,6 +105,12 @@ final class AppModel: ObservableObject {
     /// True while the floating pill is on screen. The main window's toolbar pill steps aside
     /// then, so there is one pill on screen and not two copies of the same state.
     @Published private(set) var floatingPillVisible = false
+    /// Where the toolbar pill's buttons are, in the pill's own coordinates. The pill reports
+    /// them as it is drawn; a test can then aim a click at the body between them.
+    var toolbarPillRegions: [CGRect] = []
+    /// Where the toolbar pill's body is, in the pill's own coordinates. The body is the stretch
+    /// between the buttons, and a double click there opens the main window.
+    var toolbarPillBody: CGRect = .null
 
     /// The floating pill says it is up or down; the toolbar pill watches.
     func setFloatingPillVisible(_ on: Bool) {
@@ -123,6 +132,8 @@ final class AppModel: ObservableObject {
     /// Opens the menu bar panel, leaving it open if it already is: the main window's button
     /// means "show me the listener", not "flip the listener".
     var openPanel: (() -> Void)?
+    /// Toggles the main window: opens it if closed/minimized, minimizes it if frontmost.
+    var toggleMainWindow: (() -> Void)?
     /// Shows the app's own menu (纪要 / 显示 / 窗口 …) next to a point in the window, so the
     /// commands are one click away without going to the menu bar.
     var showMenu: ((_ anchor: NSRect) -> Void)?
@@ -302,27 +313,29 @@ final class AppModel: ObservableObject {
     /// surface) read the same numbers.
     private func tickCapture() {
         if recorder.state == .recording || recorder.state == .preparing || recorder.state == .paused {
+            capture.source = .mic
             capture.level = recorder.level
             capture.waveform = recorder.waveform
             capture.elapsed = recorder.elapsed
             capture.running = true
             return
         }
-        guard listen.isRunning else {
-            capture.running = false
+        if listen.isRunning {
+            capture.source = .system
+            capture.running = true
+            // The system audio path reports its level in decibels; the scope wants the same
+            // 0…1 the microphone gives.
+            let rms = listen.router.takeLevel()
+            let db = 20 * log10(max(Double(rms), 1e-6))
+            let v = Float(min(1, max(0, (db + 40) / 40)))
+            capture.level = v
+            capture.waveform.append(v)
+            if capture.waveform.count > 48 { capture.waveform.removeFirst(capture.waveform.count - 48) }
+            // The clock stands still while the listening is on hold.
+            capture.elapsed = listenElapsed
             return
         }
-        capture.running = true
-        // The system audio path reports its level in decibels; the scope wants the same
-        // 0…1 the microphone gives.
-        let rms = listen.router.takeLevel()
-        let db = 20 * log10(max(Double(rms), 1e-6))
-        let v = Float(min(1, max(0, (db + 40) / 40)))
-        capture.level = v
-        capture.waveform.append(v)
-        if capture.waveform.count > 48 { capture.waveform.removeFirst(capture.waveform.count - 48) }
-        // The clock stands still while the listening is on hold.
-        capture.elapsed = listenElapsed
+        capture.running = false
     }
 
     func setOverlayAuto(_ on: Bool) {
@@ -341,6 +354,7 @@ final class AppModel: ObservableObject {
     func refresh() {
         running = listen.isRunning
         listeningPaused = listen.isPaused
+        micState = recorder.state
         // Once the tap has run, the permission is there: pausing doesn't take it away.
         systemAudioOK = systemAudioOK || listen.isRunning
         summary = listen.languageSummary()
@@ -560,22 +574,39 @@ final class AppModel: ObservableObject {
         recorder.onRewrite = { [weak self] in
             self?.recordRewrite()
         }
+        // The toolbar pill watches micState; keep it in step with the engine immediately,
+        // instead of waiting for the 0.1s capture tick.
+        recorder.onState = { [weak self] state in
+            self?.micState = state
+            // A recording that starts again gets the full quiet time: the pause it was on hold
+            // for is not quiet, so it must not count against it.
+            if state == .recording { self?.recordWatch?.heard(at: Date()) }
+        }
         recorder.start()
+        // A recording answers to the same 通用 settings as a meeting: the same quiet rule, the
+        // same minutes, the same action.
+        recordWatch = MeetingEndWatch(config: endConfig, start: Date())
+        setEnding(nil)
         // The recording drives the same live notes as a meeting: the notes window, the summary
         // panel and the saved record are one thing, however the words were heard.
         notes.begin(session.id)
+        micState = recorder.state
         refresh()
     }
 
     /// Ends the recording and keeps it in the meeting list.
     func endRecording() {
         recorder.stop()
+        recordWatch = nil
+        setEnding(nil)
+        micState = recorder.state
         guard let id = recordSessionID else { return }
         // The session id is kept: a recording can still be corrected after it has ended, and
         // the changes go into the same meeting.
         recorder.onLine = nil
         recorder.onTranslation = nil
         recorder.onVoice = nil
+        recorder.onState = nil
         // The recorder owns its own audio file and rewraps it into .m4a when it closes; the
         // store is not asked to do it again, or the two would race and the second one would
         // take the finished file away.
@@ -882,6 +913,19 @@ final class AppModel: ObservableObject {
 
     /// The meeting being recorded, while one is.
     private var recordSessionID: String?
+    /// The session currently being recorded by the microphone path, for UI that needs it.
+    var activeRecordingSessionID: String? { recordSessionID }
+    /// The title shown for the recording in progress: the automatic name (e.g. notes title/date)
+    /// until the user renames it, then the user's title.
+    var recordSessionDisplayTitle: String {
+        guard let id = recordSessionID, let s = store.session(id) else { return "" }
+        return s.displayTitle
+    }
+    /// Renames the recording in progress. An empty string reverts to the automatic title.
+    func renameRecordingSession(to title: String) {
+        guard let id = recordSessionID else { return }
+        store.rename(id, to: title)
+    }
     /// The language the recorded sentences are translated into.
     var target: String { recordTarget == "none" ? settings.myLanguage : recordTarget }
 
@@ -1376,6 +1420,48 @@ final class AppModel: ObservableObject {
         debugLog("debug control ready")
     }
 
+    /// Where the toolbar's pill sits on the screen, in Quartz's top-left coordinates.
+    ///
+    /// The window's frame is in Cocoa coordinates (bottom-left); the screen's own height turns
+    /// it into the top-left coordinates a click uses.
+    private func pillFrameReport() -> String {
+        guard let window = NSApp.windows.first(where: { $0.toolbar != nil && $0.isVisible }),
+              let toolbar = window.toolbar,
+              let item = toolbar.items.first(where: { $0.itemIdentifier == MainToolbar.pill }),
+              let view = item.view else {
+            return "pill frame: no toolbar pill"
+        }
+        let inWindow = view.convert(view.bounds, to: nil)
+        let frame = window.convertToScreen(inWindow)
+        guard let screen = window.screen ?? NSScreen.main else { return "pill frame: no screen" }
+        // Cocoa counts from the bottom of the screen; Quartz counts from the top.
+        let topLeftY = screen.frame.maxY - frame.maxY
+        // The buttons are reported in the pill's own space; the pill's space starts at the
+        // hosting view's left edge, which is the toolbar item's left edge on the screen.
+        let buttons = toolbarPillRegions.map { r in
+            "\(Int(frame.minX + r.minX)),\(Int(topLeftY + r.minY)) \(Int(r.width))x\(Int(r.height))"
+        }
+        // The body is the stretch between the buttons; a double click there opens the window.
+        let body = toolbarPillBody.isNull ? "none" :
+            "\(Int(frame.minX + toolbarPillBody.minX)),\(Int(topLeftY + toolbarPillBody.minY)) \(Int(toolbarPillBody.width))x\(Int(toolbarPillBody.height))"
+        return "pill frame: x=\(Int(frame.minX)) y=\(Int(topLeftY)) w=\(Int(frame.width)) h=\(Int(frame.height)) buttons=[\(buttons.joined(separator: ", "))] body=\(body)"
+    }
+
+    /// Where the floating pill sits on the screen, in Quartz's top-left coordinates.
+    ///
+    /// Its buttons are reported too, so a click can be aimed at the body between them.
+    private func floatingPillFrameReport() -> String {
+        guard let window = floatingPill.window else { return "floating pill: no window" }
+        let frame = window.frame
+        guard let screen = window.screen ?? NSScreen.main else { return "floating pill: no screen" }
+        // The buttons are in the overlay's coordinates; the overlay sits on the content.
+        let topLeftY = screen.frame.maxY - frame.maxY
+        let buttons = floatingPill.buttonRegions.map { r in
+            "\(Int(frame.minX + r.minX)),\(Int(topLeftY + r.minY)) \(Int(r.width))x\(Int(r.height))"
+        }
+        return "floating pill: x=\(Int(frame.minX)) y=\(Int(topLeftY)) w=\(Int(frame.width)) h=\(Int(frame.height)) buttons=[\(buttons.joined(separator: ", "))]"
+    }
+
     private func debugCommand(_ cmd: String) {
         debugLog("debug command: \(cmd)")
         let parts = cmd.split(separator: ":", maxSplits: 1).map(String.init)
@@ -1661,9 +1747,11 @@ final class AppModel: ObservableObject {
             debugLog("record: stopped session=\(store.liveID ?? "?") lines=\(recorder.lines.count)")
         case "recordPause":
             recorder.pause()
+            micState = recorder.state
             debugLog("record: paused state=\(recorder.state)")
         case "recordResume":
             recorder.resume()
+            micState = recorder.state
             debugLog("record: resumed state=\(recorder.state)")
         case "recordState":
             debugLog("record: state=\(recorder.state) elapsed=\(Int(recorder.elapsed)) lines=\(recorder.lines.count) "
@@ -1835,6 +1923,13 @@ final class AppModel: ObservableObject {
                 let name = "\(i)-\(String(describing: type(of: w)).prefix(24)).png"
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg).appendingPathComponent(name))
             }
+        case "pillFrame":
+            // Where the toolbar pill sits on the screen, in Quartz's top-left coordinates,
+            // so a click can be aimed at it.
+            debugLog(pillFrameReport())
+        case "floatingPillFrame":
+            // The same for the floating pill, with its buttons.
+            debugLog(floatingPillFrameReport())
         case "interfaceLanguage":
             // Puts the interface in a language without a restart, for checking the English UI.
             // It goes through the same door as the settings row, so the pick in memory and the
@@ -1950,6 +2045,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.install()
         setupStatusItem()
         model.openMainWindow = { [weak self] in self?.showMainWindow() }
+        model.toggleMainWindow = { [weak self] in self?.showMainWindow() }
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
         model.openPanel = { [weak self] in self?.openPopover() }
@@ -2089,6 +2185,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: Main window
 
     func showMainWindow() {
+        if let w = mainWindow, w.isVisible, w.isKeyWindow {
+            // A double click on the pill when the main window is already in front minimises it:
+            // the pill is the way back to the records, so it is a toggle, not just an opener.
+            w.miniaturize(nil)
+            return
+        }
         popover.performClose(nil)
         if mainWindow == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 740),

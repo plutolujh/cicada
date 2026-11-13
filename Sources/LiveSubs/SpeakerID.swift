@@ -401,19 +401,19 @@ struct SpeakerEditRequest: Equatable {
 final class SpeakerNamer: ObservableObject {
     @Published private(set) var busy: Set<String> = []
     private var askedAt: [String: Int] = [:]
-    private let ling: LingClient
+    private let ai: AIClient
     private let store: SessionStore
 
-    init(ling: LingClient, store: SessionStore) {
-        self.ling = ling
+    init(ai: AIClient, store: SessionStore) {
+        self.ai = ai
         self.store = store
     }
 
-    var available: Bool { ling.hasKey }
+    var available: Bool { ai.hasKey }
 
     /// `force`: the meeting just ended, so read it all once more.
     func guess(_ id: String, force: Bool = false) {
-        guard ling.hasKey, !busy.contains(id), let s = store.session(id) else { return }
+        guard ai.hasKey, !busy.contains(id), let s = store.session(id) else { return }
         guard force || s.lines.count >= (askedAt[id] ?? -1000) + 20, let content = SpeakerNameGuess.content(s) else { return }
         // Everyone already has a name the user gave: nothing to ask.
         let numbers = SpeakerLabels.voiceNumbers(s.lines)
@@ -423,7 +423,7 @@ final class SpeakerNamer: ObservableObject {
         Task {
             defer { busy.remove(id) }
             do {
-                let reply = try await ling.chat(content: content, instruction: SpeakerNameGuess.instruction,
+                let reply = try await ai.chat(content: content, instruction: SpeakerNameGuess.instruction,
                                                 priority: .notes, json: true, maxTokens: 300)
                 let (found, read) = SpeakerNameGuess.read(reply, s)
                 var refuted = read
@@ -434,7 +434,7 @@ final class SpeakerNamer: ObservableObject {
                 debugLog("speaker names: \(found.count) found, \(refuted.count) without evidence for \(id)")
                 contentLog("speaker names reply: \(reply)")
             } catch {
-                debugLog("speaker names: ling failed \(error)")
+                debugLog("speaker names: ai failed \(error)")
             }
         }
     }

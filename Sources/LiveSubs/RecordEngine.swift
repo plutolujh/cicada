@@ -134,6 +134,8 @@ final class RecordEngine: ObservableObject {
     var onEdit: ((String) -> Void)?
     /// Called when the sentences of the recording change, so the record is rewritten.
     var onRewrite: (() -> Void)?
+    /// Called whenever the recording state changes, so the toolbar pill stays in step.
+    var onState: ((State) -> Void)?
     /// The languages a model is installed for.
     var installed: Set<String> = []
     /// The languages worth detecting between.
@@ -199,6 +201,7 @@ final class RecordEngine: ObservableObject {
     func start() {
         guard state == .idle else { return }
         state = .preparing
+        onState?(.preparing)
         problem = nil
         live = ""
         liveWords = []
@@ -234,6 +237,7 @@ final class RecordEngine: ObservableObject {
             guard state == .preparing else { return }
             startTick()
             state = .recording
+            onState?(.recording)
             debugLog("record: started lang=\(first.locale)")
         }
     }
@@ -241,6 +245,7 @@ final class RecordEngine: ObservableObject {
     func stop() {
         guard state == .recording || state == .preparing || state == .paused else { return }
         state = .stopping
+        onState?(.stopping)
         generation += 1
         tickTimer?.invalidate()
         tickTimer = nil
@@ -259,6 +264,7 @@ final class RecordEngine: ObservableObject {
         settleLive()
         closeRecorder()
         state = .idle
+        onState?(.idle)
         debugLog("record: stopped lines=\(lines.count)")
     }
 
@@ -269,6 +275,7 @@ final class RecordEngine: ObservableObject {
         clock.pause()
         elapsed = clock.elapsed()
         state = .paused
+        onState?(.paused)
         generation += 1
         debugLog("record: paused lines=\(lines.count)")
     }
@@ -280,6 +287,7 @@ final class RecordEngine: ObservableObject {
         clock.resume()
         startedAt = Date().addingTimeInterval(-clock.elapsed())
         state = .recording
+        onState?(.recording)
         debugLog("record: resumed lines=\(lines.count)")
     }
 
@@ -433,6 +441,7 @@ final class RecordEngine: ObservableObject {
         guard inFormat.sampleRate > 0 else {
             problem = L("没有可用的麦克风")
             state = .idle
+            onState?(.idle)
             return
         }
         inputNode.removeTap(onBus: 0)
@@ -457,6 +466,7 @@ final class RecordEngine: ObservableObject {
             debugLog("record: mic start failed: \(error)")
             problem = L("麦克风无法启动，请在系统设置里允许\(appDisplayName)使用麦克风")
             state = .idle
+            onState?(.idle)
         }
     }
 
