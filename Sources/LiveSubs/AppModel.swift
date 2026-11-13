@@ -1632,6 +1632,13 @@ final class AppModel: ObservableObject {
             debugLog("listen: running=\(listen.isRunning) paused=\(listen.isPaused) "
                 + "elapsed=\(Int(listenElapsed)) lines=\(store.session(store.liveID ?? "")?.lines.count ?? 0) "
                 + "status=\(listen.statusText)")
+        case "listenStats":
+            // Where the system audio dies: the tap's loudness, what the analyzer was given, and
+            // what the recognizer answered.
+            let s = listen.recognitionStats
+            debugLog("listen stats: results=\(s.0) finals=\(s.1) analyzerBuffers=\(s.2) "
+                + "analyzerSeconds=\(String(format: "%.1f", s.3)) convertFailures=\(s.4) "
+                + "level=\(String(format: "%.3f", capture.level))")
         case "recordScope":
             // The levels the scope draws, so the shape can be checked without a person at the mic.
             let levels = recorder.waveform.map { String(format: "%.2f", $0) }

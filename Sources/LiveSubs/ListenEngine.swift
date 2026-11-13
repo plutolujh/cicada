@@ -47,6 +47,15 @@ final class ListenEngine {
     private var audioTap: SystemAudioTap?
     private var analyzer: SpeechAnalyzer?
     private var resultsTask: Task<Void, Never>?
+    /// How many results the transcriber produced, and how many of them were final: the tap can be
+    /// loud while the recognizer stays silent, and this says which side is at fault.
+    private var resultCount = 0
+    private var finalCount = 0
+    /// (results, finals, analyzer buffers, analyzer seconds, convert failures).
+    var recognitionStats: (Int, Int, Int, Double, Int) {
+        let f = router.feedStats
+        return (resultCount, finalCount, f.0, f.1, f.2)
+    }
     private var generation = 0
     private var pendingSwitch: Lang?
     private var needsDetection = true
@@ -337,6 +346,8 @@ final class ListenEngine {
             resultsTask = Task { [weak self] in
                 do {
                     for try await result in transcriber.results {
+                        self?.resultCount += 1
+                        if result.isFinal { self?.finalCount += 1 }
                         self?.handle(result, generation: gen)
                     }
                 } catch {

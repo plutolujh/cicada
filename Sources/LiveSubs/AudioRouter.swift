@@ -122,6 +122,18 @@ final class AudioRouter: @unchecked Sendable {
         queue.async { [self] in process(mono) }
     }
 
+    // MARK: Diagnostics
+
+    /// How many buffers were given to the analyzer, and how many seconds that was: the tap may be
+    /// loud while nothing reaches the recognizer, and this says which side is at fault.
+    private var yieldedBuffers = 0
+    private var yieldedSeconds = 0.0
+    private var convertFailures = 0
+    /// (buffers, seconds, convert failures) as the analyzer sees them.
+    var feedStats: (Int, Double, Int) {
+        queue.sync { (yieldedBuffers, yieldedSeconds, convertFailures) }
+    }
+
     /// Pauses or resumes the flow into the analyzer. The audio keeps arriving either way; only
     /// what reaches the recognizer stops.
     func setPaused(_ on: Bool) {
@@ -147,11 +159,16 @@ final class AudioRouter: @unchecked Sendable {
         }
         sinceGap += seconds
 
-        guard let format, let converted = converter.convert(mono, to: format) else { return }
+        guard let format, let converted = converter.convert(mono, to: format) else {
+            convertFailures += 1
+            return
+        }
         // While paused the audio is heard but not written down: the recognizer does not see it,
         // so no sentence is made of what was said while the meeting was on hold.
         if !paused {
             continuation?.yield(AnalyzerInput(buffer: converted))
+            yieldedBuffers += 1
+            yieldedSeconds += seconds
             keepVoice(mono)
             if continuation != nil { fed += seconds }
         }
@@ -195,6 +212,9 @@ final class AudioRouter: @unchecked Sendable {
         queue.sync {
             fed = 0
             pause = (0, 0)
+            yieldedBuffers = 0
+            yieldedSeconds = 0
+            convertFailures = 0
             // The clock restarts; replayed audio (below) keeps its samples at the new times.
             let keptVoice = voice
             voice = []
