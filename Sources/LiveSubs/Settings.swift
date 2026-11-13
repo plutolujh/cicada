@@ -98,7 +98,7 @@ final class AppSettings: ObservableObject {
         didSet { save() }
     }
     /// When nobody has said anything for `silenceMinutes`: "prompt" (count down, then end),
-    /// "end" or "off". See `MeetingEndWatch`.
+    /// "pause" (count down, then hold the session on hold), "end" or "off". See `MeetingEndWatch`.
     @Published var silenceEnd: String {
         didSet { save() }
     }

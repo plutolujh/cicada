@@ -728,7 +728,7 @@ struct SettingsView: View {
                         .toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Palette.ink)
                 }
                 SettingsRow(title: L("没人说话时"), detail: L("按识别出的话算，背景音乐不算"), divider: settings.silenceEnd != "off") {
-                    Segments(options: [("prompt", L("提醒后结束")), ("end", L("直接结束")), ("off", L("一直记录"))],
+                    Segments(options: [("prompt", L("提醒后结束")), ("pause", L("暂停")), ("end", L("直接结束")), ("off", L("一直记录"))],
                              value: settings.silenceEnd) { settings.silenceEnd = $0 }
                 }
                 if settings.silenceEnd != "off" {

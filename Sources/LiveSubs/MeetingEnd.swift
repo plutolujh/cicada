@@ -10,7 +10,13 @@ import Foundation
 /// doesn't keep a meeting alive. While a meeting app is still in a call, silence doesn't count:
 /// muted webinars and quiet screen shares are still meetings. Pure; `AppModel` ticks it.
 struct MeetingEndWatch: Equatable {
-    enum Silence: String { case prompt, end, off }
+    /// What to do when nobody has said anything for a while.
+    ///
+    /// "prompt" counts down and then ends, "pause" counts down and then holds the meeting on
+    /// hold — the words are still written down, but nothing is recognised while it is quiet, so
+    /// a long gap does not cost anything and does not have to be thrown away. "end" stops it at
+    /// once, "off" never reacts to silence.
+    enum Silence: String { case prompt, pause, end, off }
 
     struct Config: Equatable {
         var followApps = true
@@ -28,6 +34,8 @@ struct MeetingEndWatch: Equatable {
         case silence
         /// Nobody spoke at all: there is nothing to keep, so it just stops, without a countdown.
         case nobodySpoke
+        /// The room went quiet: the meeting is held on hold instead of being ended.
+        case silencePause
     }
 
     struct Pending: Equatable {
@@ -70,7 +78,12 @@ struct MeetingEndWatch: Equatable {
             inCall = config.followApps ? calls : [:]
             pending = nil
             let inACall = config.followApps && !calls.isEmpty
-            if config.silence != .off, !inACall, now.timeIntervalSince(lastSpeech) >= config.silenceAfter { return .nobodySpoke }
+            if config.silence != .off, !inACall, now.timeIntervalSince(lastSpeech) >= config.silenceAfter {
+                // A pause holds the meeting on hold however quiet it is, even before the first
+                // words: the same quiet rule, the same answer.
+                if config.silence == .pause { return .silencePause }
+                return .nobodySpoke
+            }
             return nil
         }
         if config.followApps {
@@ -92,6 +105,8 @@ struct MeetingEndWatch: Equatable {
         if config.silence == .off || inACall, pending?.reason == .silence { pending = nil }
         if let p = pending, now >= p.deadline {
             pending = nil
+            // A pause is what the quiet was for: the meeting is held on hold, not thrown away.
+            if p.reason == .silence, config.silence == .pause { return .silencePause }
             return p.reason
         }
         return nil

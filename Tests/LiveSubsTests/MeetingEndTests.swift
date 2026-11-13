@@ -76,6 +76,36 @@ import Testing
         #expect(off.pending == nil)
     }
 
+    @Test func silencePauseModeHoldsTheMeetingOnHold() {
+        var w = watch(.pause)
+        w.heard(at: at(5))
+        // The countdown comes first, so the reader knows why it stops.
+        #expect(w.tick(at: at(605), calls: [:], said: true) == nil)
+        #expect(w.pending == .init(reason: .silence, deadline: at(665)))
+        // Then it pauses instead of ending: the meeting is kept, not thrown away.
+        #expect(w.tick(at: at(665), calls: [:], said: true) == .silencePause)
+        #expect(w.pending == nil)
+    }
+
+    @Test func silencePauseModeNeverEndsTheMeeting() {
+        var w = watch(.pause)
+        w.heard(at: at(5))
+        #expect(w.tick(at: at(605), calls: [:], said: true) == nil)
+        #expect(w.tick(at: at(665), calls: [:], said: true) == .silencePause)
+        // The words it already has are still there; a pause is not an ending. The quiet starts
+        // over, so it pauses again later and still never ends by itself.
+        #expect(w.tick(at: at(1_265), calls: [:], said: true) == nil)
+        #expect(w.tick(at: at(1_325), calls: [:], said: true) == .silencePause)
+    }
+
+    @Test func silencePauseModeHoldsOnHoldEvenBeforeTheFirstWords() {
+        var w = watch(.pause)
+        // Nobody has said anything yet: the quiet rule is the same rule, so it pauses too
+        // instead of stopping with nothing to keep.
+        #expect(w.tick(at: at(599), calls: [:], said: false) == nil)
+        #expect(w.tick(at: at(600), calls: [:], said: false) == .silencePause)
+    }
+
     @Test func silenceDoesNotCountDuringACall() {
         var w = watch()
         #expect(w.tick(at: at(5_000), calls: zoom, said: true) == nil)

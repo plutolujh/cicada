@@ -48,6 +48,8 @@ final class AppModel: ObservableObject {
     /// The notes window is on screen: the menu bar panel's 显示 / 收起 follows it.
     @Published private(set) var notesShown = false
     private var endWatch: MeetingEndWatch?
+    /// The same watch for a recording: the 通用 settings answer to both sources.
+    private var recordWatch: MeetingEndWatch?
     private var endTimer: Timer?
     /// The capture surface's level and clock.
     private var captureTimer: Timer?
@@ -145,7 +147,9 @@ final class AppModel: ObservableObject {
             // The system audio path reports the words being heard through the subtitle callback;
             // the transcript column reads them from here, like the microphone path does.
             self?.capture.setLive(src, words: [])
-            if !src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self?.heardSpeech(); self?.heardWords() }
+            // Only a confirmed sentence counts as words: a volatile guess can change, and a
+            // noise that looks like speech would keep the quiet timer alive for good.
+            if !src.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { self?.heardSpeech() }
             guard let self, self.settings.displayMode == "bar" else { return }
             self.overlay.clearStatus()
             let shown = self.displayed(src, dst)
@@ -156,7 +160,10 @@ final class AppModel: ObservableObject {
             self?.overlay.setStatus(text)
         }
         listen.onStateChange = { [weak self] in self?.refresh() }
-        listen.onFinal = { [weak self] seg, duration in self?.recordHeard(seg, duration: duration) }
+        listen.onFinal = { [weak self] seg, duration in
+            self?.heardWords()
+            self?.recordHeard(seg, duration: duration)
+        }
         speakers.onVoice = { [weak self] line, voice in
             guard let self else { return }
             // A recorded sentence is shown with the voice it turned out to have; the recorder
@@ -616,6 +623,9 @@ final class AppModel: ObservableObject {
         guard recordSessionID != nil else { return }
         store.append(TranscriptLine(id: line.id, t: line.t, speaker: "them", src: line.text,
                                     dst: line.translation, srcLang: line.lang, dstLang: target))
+        // Someone spoke: the quiet timer starts over.
+        recordWatch?.heard(at: Date())
+        setEnding(recordWatch?.pending)
     }
 
     /// Whose voice a recorded sentence turned out to be: it goes into the meeting record, so the
@@ -1091,8 +1101,12 @@ final class AppModel: ObservableObject {
         setEnding(endWatch?.pending)
     }
 
-    /// Every 2 s: while listening, whether the meeting is over; after one ended by itself, whether
-    /// a meeting app started the next call.
+    /// Every 2 s: while listening or recording, whether the meeting is over; after one ended by
+    /// itself, whether a meeting app started the next call.
+    ///
+    /// Both sources answer to the same 通用 setting: a recording that goes quiet for a while
+    /// does the same thing a meeting that goes quiet does, because from the reader's side they
+    /// are the same thing.
     private func watchEnd() {
         if listen.isRunning, var w = endWatch {
             w.config = endConfig
@@ -1102,6 +1116,13 @@ final class AppModel: ObservableObject {
             endWatch = w
             setEnding(w.pending)
             if let reason { autoEnd(reason, watch: w) }
+        } else if recorder.state == .recording, var w = recordWatch {
+            w.config = endConfig
+            let said = recorder.lines.isEmpty == false
+            let reason = w.tick(at: Date(), calls: [:], said: said)
+            recordWatch = w
+            setEnding(w.pending)
+            if let reason { recordAutoAction(reason, watch: w) }
         } else if !listen.isRunning, autoEnded, settings.endWithApp, !(fakeCalls ?? MicUsers.currentCalls()).isEmpty {
             debugLog("meeting end: a meeting app started a call, starting a new meeting")
             start()
@@ -1123,23 +1144,27 @@ final class AppModel: ObservableObject {
     private func showEndingOnBar() {
         guard settings.displayMode == "bar", let p = ending else { return }
         let left = max(0, Int(p.deadline.timeIntervalSinceNow.rounded()))
-        overlay.notice(endingTitle(p) + " · " + L("\(left) 秒后结束"))
+        overlay.notice(endingTitle(p) + " · " + (endConfig.silence == .pause ? L("\(left) 秒后暂停") : L("\(left) 秒后结束")))
     }
 
     func endingTitle(_ p: MeetingEndWatch.Pending) -> String {
         switch p.reason {
         case .appLeft(let name): L("\(name) 已挂断")
-        case .silence, .nobodySpoke: L("已经 \(max(1, Int((endConfig.silenceAfter / 60).rounded()))) 分钟没人说话")
+        case .silence, .nobodySpoke, .silencePause: L("已经 \(max(1, Int((endConfig.silenceAfter / 60).rounded()))) 分钟没人说话")
         }
     }
 
     func endingDetail(_ p: MeetingEndWatch.Pending, now: Date = Date()) -> String {
-        L("\(max(0, Int(p.deadline.timeIntervalSince(now).rounded()))) 秒后结束会议并整理纪要")
+        let left = max(0, Int(p.deadline.timeIntervalSince(now).rounded()))
+        // A pause is not an ending: it says what is about to happen, which is different.
+        if endConfig.silence == .pause { return L("\(left) 秒后暂停") }
+        return L("\(left) 秒后结束会议并整理纪要")
     }
 
     /// "继续记录" on the ending prompt.
     func keepRecording() {
         endWatch?.keepGoing(at: Date())
+        recordWatch?.keepGoing(at: Date())
         setEnding(nil)
         debugLog("meeting end: kept going")
     }
@@ -1153,11 +1178,39 @@ final class AppModel: ObservableObject {
             stop()
             return
         }
+        if reason == .silencePause {
+            // The room went quiet: the meeting is held on hold, not ended. The words are kept
+            // and the clock stops, so the quiet is not counted as part of the meeting.
+            debugLog("meeting end: quiet for \(Int(w.config.silenceAfter)) s, paused")
+            pauseListening()
+            endWatch?.keepGoing(at: Date())
+            setEnding(nil)
+            return
+        }
         var at = w.lastSpeech.addingTimeInterval(5)
         if case .appLeft = reason { at = max(at, Date().addingTimeInterval(-w.config.appGrace)) }
         debugLog("meeting end: ended by itself (\(reason)), end time \(Int(Date().timeIntervalSince(at))) s ago")
         stop(endedAt: at)
         autoEnded = true
+    }
+
+    /// The same thing for a recording: a quiet room pauses it, an empty one ends it.
+    private func recordAutoAction(_ reason: MeetingEndWatch.Reason, watch w: MeetingEndWatch) {
+        if reason == .nobodySpoke {
+            debugLog("record: nobody spoke for \(Int(w.config.silenceAfter)) s, stopped")
+            endRecording()
+            return
+        }
+        if reason == .silencePause {
+            debugLog("record: quiet for \(Int(w.config.silenceAfter)) s, paused")
+            recorder.pause()
+            recordWatch?.keepGoing(at: Date())
+            setEnding(nil)
+            refresh()
+            return
+        }
+        debugLog("record: ended by itself (\(reason))")
+        endRecording()
     }
 
     // MARK: Meeting record

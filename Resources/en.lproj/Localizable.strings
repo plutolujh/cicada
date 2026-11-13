@@ -147,6 +147,7 @@
 "%@ 已挂断" = "%@ hung up";
 "已经 %lld 分钟没人说话" = "No one has spoken for %lld min";
 "%lld 秒后结束会议并整理纪要" = "Ending in %lld s and writing up the notes";
+"%lld 秒后暂停" = "Pausing in %lld s";
 "欢迎使用%@" = "Welcome to %@";
 "设置" = "Settings";
 "正在记录会议" = "A meeting is being recorded";
@@ -668,6 +669,7 @@
 "按识别出的话算，背景音乐不算" = "Counts recognized words, not background music";
 "多久算没人说话" = "Silent for";
 "提醒后结束" = "Ask, then end";
+"暂停" = "Pause";
 "直接结束" = "End";
 "一直记录" = "Keep going";
 "实验功能" = "Experimental";

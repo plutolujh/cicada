@@ -50,7 +50,7 @@ Hold the right `⌥` key and speak so the room hears your translated voice throu
 
 ### Meeting records
 
-Every session saves its bilingual transcript, notes, and audio recording on your Mac, and turning on experimental speaker identification separates voices on the other side and fills in their names when a key is set. Cicada ends the session and trims the silent tail when the call hangs up or after 10 minutes of silence, and you can generate notes later or export to Markdown, Word, or SRT subtitles. Right now "you" in the transcript covers only what you say while holding the talk key; recording what you say directly into the meeting is on the [roadmap](#roadmap).
+Every session saves its bilingual transcript, notes, and audio recording on your Mac, and turning on experimental speaker identification separates voices on the other side and fills in their names when a key is set. Cicada trims the silent tail when the call hangs up, and after 10 minutes of silence it does what you picked in the general settings: prompt and end, end at once, keep recording, or pause — a pause holds the session on hold with the words you already have, and the quiet stretch counts for nothing. You can generate notes later or export to Markdown, Word, or SRT subtitles. Right now "you" in the transcript covers only what you say while holding the talk key; recording what you say directly into the meeting is on the [roadmap](#roadmap).
 
 <p align="center">
   <img src="docs/records.png" width="640" alt="Meeting records window showing identified speakers and a line-by-line English and Chinese transcript">
