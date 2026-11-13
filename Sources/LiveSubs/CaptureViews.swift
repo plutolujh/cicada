@@ -19,6 +19,11 @@ struct CaptureView: View {
     /// Which source the user picked. Changing it while a capture is running stops the one that
     /// was: the microphone and the system audio cannot both be listened to at once.
     @State private var picked: CaptureSource = .system
+    /// The divider position between the transcript and the live notes (0–1, share of total width
+    /// given to the left pane). Resets to half every time the surface opens; not persisted.
+    @State private var divider: CGFloat = 0.5
+    /// The divider value when the current drag began, so the drag accumulates on it.
+    @State private var dragStart: CGFloat = 0.5
     /// The source the surface shows: the one that is running, or the one that was picked when
     /// nothing runs. The toolbar pill and this surface therefore always show the same thing.
     ///
@@ -47,12 +52,19 @@ struct CaptureView: View {
     private var keepsAudio: Bool { model.recordKeepsAudio }
 
     var body: some View {
-        HStack(spacing: 0) {
-            left
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            Rectangle().fill(MainWindowView.hairline).frame(width: 1)
-            right
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        GeometryReader { geo in
+            let total = max(geo.size.width, 1)
+            let minLeft: CGFloat = 360
+            let minRight: CGFloat = 320
+            let leftWidth = max(minLeft, min(total - minRight, total * divider))
+            HStack(spacing: 0) {
+                left
+                    .frame(width: leftWidth, alignment: .leading)
+                    .frame(maxHeight: .infinity)
+                dividerBar(totalWidth: total)
+                right
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .background(Color.white)
         .overlay {
@@ -76,6 +88,37 @@ struct CaptureView: View {
         .onChange(of: model.recordAutoLang) { _, v in engine.detectsLanguage = v }
         .onChange(of: model.recordKeepsAudio) { _, v in engine.keepsAudio = v }
         .onChange(of: engine.state) { _, _ in feed.source = source }
+    }
+
+    /// A draggable bar between the transcript and the notes. A 1pt hairline is what the eye
+    /// sees; the wider hit area is what the pointer grabs.
+    private func dividerBar(totalWidth: CGFloat) -> some View {
+        Rectangle()
+            .fill(MainWindowView.hairline)
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                            .onChanged { value in
+                                let delta = value.translation.width / max(totalWidth, 1)
+                                divider = dragStart + delta
+                            }
+                            .onEnded { _ in
+                                dragStart = divider
+                            }
+                    )
+                    .onHover { inside in
+                        if inside {
+                            NSCursor.resizeLeftRight.push()
+                        } else {
+                            NSCursor.pop()
+                        }
+                    }
+            }
     }
 
     // MARK: Left — the source and the words
