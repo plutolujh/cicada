@@ -70,7 +70,7 @@ Need a break? Press Pause: the microphone stays open (the level meter keeps movi
 
 "Floating pill" in the "显示" (Show) menu takes the pill out of the toolbar and puts it on its own: a small borderless window with no title bar and no traffic lights, just the pill, which you can drag anywhere on the screen — over other apps included. It stays when the main window is closed or tucked away in the menu bar, and there is only ever one pill on screen, never two.
 
-Pause, Resume, Stop and End on the pill take the click on the first press; the drag only happens on the body of the pill and never steals a button's click.
+Pause, Resume, Stop and End on the pill take the click on the first press; the drag only happens on the body of the pill and never steals a button's click. Double-clicking the body of the pill opens the main window with your meeting records, so you don't have to go looking for the menu.
 
 ## Privacy & Permissions
 

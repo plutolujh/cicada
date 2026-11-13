@@ -61,6 +61,9 @@ struct ListenPill: View {
     /// True in the floating panel: the toolbar's own pill steps aside, so there is one pill on
     /// screen, not two copies of the same state.
     var hiddenWhileFloating = false
+    /// Where the pill's buttons are, in the pill's own coordinates. The double click opens the
+    /// main window only on the pill's body: a double click on a button belongs to that button.
+    @State private var buttonRegions: [CGRect] = []
 
     var body: some View {
         Group {
@@ -88,10 +91,24 @@ struct ListenPill: View {
         .onChange(of: model.ending) { _, p in
             if let p { endingTotal = max(1, p.deadline.timeIntervalSinceNow) }
         }
+        // A double click on the pill's body opens the main window: the pill is small and its
+        // buttons are few, so this is the way back to the records without hunting for the menu.
+        .onTapGesture(count: 2) { location in
+            guard !isOverButton(location) else { return }
+            model.openMainWindow?()
+        }
+        .coordinateSpace(name: "PillLocalSpace")
+        .onPreferenceChange(PillLocalButtonRegions.self) { buttonRegions = $0 }
         .padding(.vertical, 2)
         // A toolbar item keeps the width it was first laid out at: a fixed slot, wide enough for
         // the longest state (the English countdown), with the pill centred in it.
         .frame(width: 420)
+    }
+
+    /// Whether a click at this point landed on one of the pill's buttons. The regions are
+    /// reported in the same coordinate space the tap gives, so they can be compared directly.
+    private func isOverButton(_ location: CGPoint) -> Bool {
+        buttonRegions.contains { $0.contains(location) }
     }
 
     private var idle: some View {

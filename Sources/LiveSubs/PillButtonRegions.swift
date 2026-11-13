@@ -17,15 +17,40 @@ struct PillButtonRegions: PreferenceKey {
     }
 }
 
+/// Where the pill's buttons are, in the pill's own local coordinates.
+///
+/// The double click that opens the main window has to know whether the click landed on a
+/// button: a double click on 暂停 is a double click on 暂停, not an instruction to open a
+/// window. The named space above belongs to the floating panel and sits outside the pill, so
+/// this one measures inside it — the tap and the regions are then in the same space.
+struct PillLocalButtonRegions: PreferenceKey {
+    static var value: [CGRect] = []
+
+    static var defaultValue: [CGRect] { [] }
+
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) {
+        value += nextValue()
+    }
+}
+
 /// Marks a button of the pill: it reports where it is, so the drag overlay steps aside there.
+///
+/// The place is reported twice: once in the floating panel's named space, which is outside the
+/// pill, and once in the pill's own space, which the pill uses to tell its body from its
+/// buttons when a double click asks for the main window.
 struct PillButton: ViewModifier {
     func body(content: Content) -> some View {
         content.background(
             GeometryReader { geo in
-                Color.clear.preference(
-                    key: PillButtonRegions.self,
-                    value: [geo.frame(in: .named("PillButtonSpace"))]
-                )
+                Color.clear
+                    .preference(
+                        key: PillButtonRegions.self,
+                        value: [geo.frame(in: .named("PillButtonSpace"))]
+                    )
+                    .preference(
+                        key: PillLocalButtonRegions.self,
+                        value: [geo.frame(in: .named("PillLocalSpace"))]
+                    )
             }
         )
     }
