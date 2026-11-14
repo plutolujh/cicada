@@ -270,16 +270,32 @@ struct CaptureView: View {
     // MARK: The controls
 
     private var controls: some View {
-        HStack(spacing: 12) {
-            Spacer(minLength: 0)
-            chips
-            displayPicker
-            exportButton
-            scope
-            clock
-            actionButtons
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                chips
+                displayPicker
+                exportButton
+                scope
+                clock
+                actionButtons
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+
+            VStack(alignment: .leading, spacing: 8) {
+                chips
+                VStack(alignment: .leading, spacing: 8) {
+                    displayPicker
+                    exportButton
+                }
+                HStack(spacing: 12) {
+                    scope
+                    clock
+                    actionButtons
+                }
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
         }
-        .padding(.horizontal, 20).padding(.vertical, 12)
     }
 
     /// The scope: how loud the input hears you right now.
