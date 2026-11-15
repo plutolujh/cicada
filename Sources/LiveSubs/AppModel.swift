@@ -1487,7 +1487,9 @@ final class AppModel: ObservableObject {
         showExportPanel?()
     }
 
-    func export(_ session: Session, kind: String, options: ExportOptions = ExportOptions()) {
+    /// Exports a meeting. `done` runs once the file is written: the export panel waits for it,
+    /// so the panel is not closed while the save sheet is still up.
+    func export(_ session: Session, kind: String, options: ExportOptions = ExportOptions(), done: (() -> Void)? = nil) {
         if kind == "copy" {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(TranscriptExport.markdown(session, options: options), forType: .string)
@@ -1506,14 +1508,17 @@ final class AppModel: ObservableObject {
         if let w = NSApp.keyWindow, !(w is NSPanel), w.isVisible {
             panel.beginSheetModal(for: w) { [weak self] r in
                 guard r == .OK, let url = panel.url else { return }
-                MainActor.assumeIsolated { _ = self?.writeExport(session, kind: kind, options: options, to: url) }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if self.writeExport(session, kind: kind, options: options, to: url) { done?() }
+                }
             }
             return
         }
         NSApp.activate()
         panel.level = .modalPanel
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        writeExport(session, kind: kind, options: options, to: url)
+        if writeExport(session, kind: kind, options: options, to: url) { done?() }
     }
 
     @discardableResult
@@ -1525,6 +1530,7 @@ final class AppModel: ObservableObject {
             case "pdf": try TranscriptExport.pdf(session, options: options).write(to: url)
             default: try TranscriptExport.markdown(session, options: options).write(to: url, atomically: true, encoding: .utf8)
             }
+            debugLog("export wrote \(url.path)")
             return true
         } catch {
             debugLog("export failed: \(error)")
@@ -1987,6 +1993,15 @@ final class AppModel: ObservableObject {
         case "exportPanel":
             // exportPanel:<session id>: the export panel for that meeting.
             if !arg.isEmpty, let s = store.session(arg) { requestExport(s) }
+        case "exportSave":
+            // exportSave:<session id>: the export panel with the save sheet up, to see the flow.
+            guard !arg.isEmpty, let s = store.session(arg) else { break }
+            requestExport(s)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                MainActor.assumeIsolated {
+                    self.export(s, kind: self.exportOptions.format.rawValue, options: self.exportOptions) {}
+                }
+            }
         case "exportRender":
             // exportRender:<session id>=<png>: the export panel as drawn.
             let p = arg.split(separator: "=", maxSplits: 1).map(String.init)
@@ -2414,6 +2429,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         exportWindow?.contentViewController = NSHostingController(rootView: ExportSheet(model: model) { [weak self] in
             self?.closeExportPanel()
         })
+        // A regular app while the panel is up: it takes focus, and the save sheet hangs off it.
+        NSApp.setActivationPolicy(.regular)
         exportWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }
@@ -2500,7 +2517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// onboarding window is open; only the menu bar item otherwise. The notes window doesn't
     /// count: it floats beside the meeting app and never takes focus from it.
     func updateActivationPolicy(closing: NSWindow? = nil) {
-        let open = [mainWindow, onboardingWindow, settingsWindow].contains { $0 != nil && $0 != closing && $0!.isVisible }
+        let open = [mainWindow, onboardingWindow, settingsWindow, exportWindow].contains { $0 != nil && $0 != closing && $0!.isVisible }
         let policy: NSApplication.ActivationPolicy = open ? .regular : .accessory
         guard NSApp.activationPolicy() != policy else { return }
         NSApp.setActivationPolicy(policy)

@@ -16,7 +16,7 @@
   - 说话同传：`speakOn` / `speakOff` 开关，`speakAsk[:off]` 面板里第一次打开时的确认卡，`speakConfirmed:<on|off>` 是否已确认过，`speakFile:<音频>` 把文件按实时速度当作麦克风输入，`speakOut:<路径>` 把译文语音另存一份，`speakOutput:<设备名片段>` 改输出设备（留空 = 虚拟麦克风）
   - 试一句：`speakTest:sample`（Mac 读一句示例）或 `speakTest:voice`（再发 `speakTestBegin` / `speakTestEnd` 当作按住、松开），结果以 `speak test:` 写进日志；`speakTestState`、`speakTestRender:<png>`、`speakTestClose`
   - 多开：两边都设 `CICADA_DEBUG_CHANNEL=x`（`open -n --env CICADA_DEBUG_CHANNEL=x build/Cicada.app`），命令只发给这一份，日志在 `/tmp/livesubs-dev-debug-x.log`
-  - 导出：`export:<目录>`、`exportPanel:<会议 id>`（打开导出面板）、`exportPick:ai,text,lines@<md|word|pdf>`（勾哪几项、什么格式）、`exportWrite:<会议 id>=<路径>`（按当前勾选写出文件，不弹保存框）
+  - 导出：`export:<目录>`、`exportPanel:<会议 id>`（打开导出面板）、`exportPick:ai,text,lines@<md|word|pdf>`（勾哪几项、什么格式）、`exportWrite:<会议 id>=<路径>`（按当前勾选写出文件，不弹保存框）、`exportSave:<会议 id>`（打开面板并把保存框拉起来，看整个流程）
   - 新手引导与窗口：`onboarding:<步骤>[,skip|ask|setup]`（1–5，5 是收尾页；skip 是第 3 步点了“先不接”，ask / setup 是第 4 步的二选一 / 清单）、`samplePlay`、`speakers:<on|off>`（实验功能“说话人识别”）、`speakerGuess:<会议 id>`（马上让 Ling 认一遍名字）、`speakersRender:<会议 id>=<png>`、`voiceprintFile:<音频>=<json>`（用 app 里的声纹模型算整个文件的声纹，和参考模型对比）、`closeWindow:<main|settings|onboarding>`、`settings:<overlay|language|speak|records|ai|diagnostics>`、`about`
   - 显示与字幕：`display:<notes|bar|none>`、`subtitles:<both|translation|original>`、`meetingSubtitles:<…>`、`overlayState`、`overlayToggle`、`overlayAuto[:off]`、`hideAfter:<秒>`
   - 纪要：`notesLang:<mine|source>`、`meetingNotesLang:<…>`、`notesRegenerate:<id>=<mine|source>`、`notesWindow[:x,y,w,h]`、`notesClose`、`notesFrame`、`notesNow`、`notesState`、`notesShow:<id>`、`notesReplay:<id>`、`notesCapturable[:off]`

@@ -83,8 +83,11 @@ struct ExportSheet: View {
             SoftButton(L("取消")) { onClose() }
             SoftButton(L("导出…"), dark: true) {
                 guard let s = session else { return }
-                model.export(s, kind: model.exportOptions.format.rawValue, options: model.exportOptions)
-                onClose()
+                // The panel stays open until the file is written: the save sheet hangs off it,
+                // and closing the panel would take the sheet with it.
+                model.export(s, kind: model.exportOptions.format.rawValue, options: model.exportOptions) {
+                    onClose()
+                }
             }
             .disabled(options.isEmpty)
             .opacity(options.isEmpty ? 0.4 : 1)
