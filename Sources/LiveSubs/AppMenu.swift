@@ -39,8 +39,7 @@ final class AppMenu: NSObject, NSMenuItemValidation {
         notes.addItem(.separator())
         notes.addItem(item(L("复制纪要"), #selector(copyNotes), "c", [.command, .shift]))
         let export = NSMenu(title: L("导出"))
-        export.addItem(item("Markdown…", #selector(exportNotes(_:)), "e", tag: 0))
-        export.addItem(item("Word…", #selector(exportNotes(_:)), tag: 1))
+        export.addItem(item(L("导出…"), #selector(exportNotes(_:)), "e"))
         export.addItem(item(L("SRT 字幕…"), #selector(exportNotes(_:)), tag: 2))
         let exportItem = NSMenuItem(title: L("导出"), action: nil, keyEquivalent: "")
         exportItem.submenu = export
@@ -273,7 +272,9 @@ final class AppMenu: NSObject, NSMenuItemValidation {
 
     @objc private func exportNotes(_ sender: NSMenuItem) {
         guard let model, let s = model.store.session(model.store.liveID ?? model.notes.shownID) else { return }
-        model.export(s, kind: ["md", "word", "srt"][sender.tag])
+        // The subtitles are the transcript and nothing else; everything else goes through the
+        // panel, which asks what the file should contain.
+        if sender.tag == 2 { model.export(s, kind: "srt") } else { model.requestExport(s) }
     }
 
     @objc private func setDisplay(_ sender: NSMenuItem) { model?.setDisplayMode(["notes", "bar", "none"][sender.tag]) }

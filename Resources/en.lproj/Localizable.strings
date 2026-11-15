@@ -84,6 +84,7 @@
 "收起后的新内容" = "New Since Collapsed";
 "复制纪要" = "Copy Notes";
 "导出" = "Export";
+"导出…" = "Export…";
 "SRT 字幕…" = "SRT Subtitles…";
 "开始录" = "Start";
 "暂停录" = "Pause Recording";
@@ -155,6 +156,7 @@
 "已经 %lld 分钟没人说话" = "No one has spoken for %lld min";
 "%lld 秒后结束会议并整理纪要" = "Ending in %lld s and writing up the notes";
 "欢迎使用%@" = "Welcome to %@";
+"导出会议记录" = "Export the meeting record";
 "设置" = "Settings";
 "正在记录会议" = "A meeting is being recorded";
 "退出会结束这场记录，已记下的内容会保存。" = "Quitting ends this recording. What has been recorded so far is saved.";
@@ -184,9 +186,6 @@
 "暂停" = "Pause";
 "恢复" = "Resume";
 "停止" = "Stop";
-"导出 PDF" = "Export PDF";
-"导出 Markdown" = "Export Markdown";
-"导出 Word" = "Export Word";
 "导出字幕 (SRT)" = "Export subtitles (SRT)";
 "复制 Markdown" = "Copy Markdown";
 "识别在本机完成，只有翻译和总结会用到 AI 服务。" = "Recognition runs on this Mac; only translation and the summary use the AI service.";
@@ -287,6 +286,14 @@
 "你" = "You";
 "对方" = "Them";
 "%@ · %lld 字" = "%@ · chars: %lld";
+
+/* ExportSheet */
+"包含" = "Include";
+"议题、鱼骨图、结论和待办" = "Topics, fishbone, conclusions and to-dos";
+"总结和议题的文字" = "The summary and the topics, in writing";
+"原始记录" = "The original record";
+"原话和翻译" = "What was said, and the translation";
+"格式" = "Format";
 
 /* InterfaceLanguage */
 "跟随系统" = "Follow system";
@@ -915,11 +922,7 @@
 "收起原话" = "Hide original";
 "在纪要旁显示原话" = "Show the original beside the notes";
 "复制为 Markdown" = "Copy as Markdown";
-"导出 Markdown…" = "Export Markdown…";
-"导出 Word…" = "Export Word…";
 "导出字幕 SRT…" = "Export SRT Subtitles…";
-"导出 PDF…" = "Export PDF…";
-"导出…" = "Export…";
 "完整版纪要" = "Full notes";
 "速记版纪要" = "Draft notes";
 "标题" = "Title";

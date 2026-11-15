@@ -491,9 +491,9 @@ struct CaptureView: View {
     /// The button that exports the capture, in the same formats a meeting can be exported in.
     private var exportButton: some View {
         Menu {
-            Button(L("导出 PDF")) { model.exportRecording(kind: "pdf") }
-            Button(L("导出 Markdown")) { model.exportRecording(kind: "md") }
-            Button(L("导出 Word")) { model.exportRecording(kind: "word") }
+            Button(L("导出…")) {
+                if let s = model.recordSession { model.requestExport(s) }
+            }
             Button(L("导出字幕 (SRT)")) { model.exportRecording(kind: "srt") }
             Divider()
             Button(L("复制 Markdown")) { model.exportRecording(kind: "copy") }

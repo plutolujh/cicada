@@ -324,6 +324,40 @@ final class SessionStore: ObservableObject {
 
 // MARK: - Export
 
+/// What an export contains, and in which format.
+///
+/// The notes have two readings — the visualization and the written summary — and the
+/// transcript is a third thing. A file gets what was asked for and nothing else.
+struct ExportOptions {
+    enum Format: String, CaseIterable {
+        case md, word, pdf
+        var ext: String {
+            switch self {
+            case .md: return "md"
+            case .word: return "docx"
+            case .pdf: return "pdf"
+            }
+        }
+    }
+    /// The visualization: the topics with their fishbone, the conclusions with the sentences
+    /// they rest on.
+    var aiView = true
+    /// The written notes: the summary and the topics as prose.
+    var textSummary = true
+    /// The transcript: what was said, and what it was translated to.
+    var transcript = true
+    var format: Format = .md
+
+    /// Nothing to write: the file would be empty.
+    var isEmpty: Bool { !aiView && !textSummary && !transcript }
+}
+
+/// The meeting the export panel is for.
+struct ExportRequest: Identifiable {
+    let id: String
+    let session: Session
+}
+
 enum TranscriptExport {
     static func clock(_ t: Double) -> String {
         let s = Int(max(0, t))
@@ -371,15 +405,87 @@ enum TranscriptExport {
         return out
     }
 
-    static func markdown(_ s: Session) -> String {
-        var out = "# \(s.displayTitle)\n\n\(header(s))\n\n"
-        let notes = notesMarkdown(s.notes)
-        if !notes.isEmpty { out += notes + "## \(L("文字记录"))\n\n" }
-        let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
-        for l in s.lines {
-            out += "**[\(clock(l.t))] \(speakerName(l, numbers, names))**  \n\(l.corrected ?? l.src)\n"
-            if let d = l.dst, d != l.corrected ?? l.src { out += "> \(d)\n" }
+    /// The AI view as Markdown: the topics with their points and their fishbone, the
+    /// conclusions with the sentences they rest on.
+    static func aiViewMarkdown(_ n: MeetingNotes) -> String {
+        var out = ""
+        if !n.summary.isEmpty { out += "**\(L("总结"))**\n\n\(n.summary)\n\n" }
+        for t in n.topics {
+            out += "### \(clock(t.start)) \(t.title)\n\n"
+            if !t.summary.isEmpty { out += "\(t.summary)\n\n" }
+            for p in t.points { out += "- \(p)\n" }
+            if !t.points.isEmpty { out += "\n" }
+            if let f = t.fishbone {
+                out += "**\(f.question.isEmpty ? L("为什么") : f.question)**\n\n"
+                for b in f.branches { out += "- \(b.label)：\(b.detail)\n" }
+                out += "\n"
+            }
+        }
+        if !n.conclusions.isEmpty {
+            out += "### \(L("结论"))\n\n"
+            for c in n.conclusions { out += "- \(c.text)\(evidence(c))\n" }
             out += "\n"
+        }
+        if !n.todos.isEmpty {
+            out += "### \(L("待办"))\n\n"
+            for t in n.todos { out += "- [ ] \(t.text)" + (t.owner.map { "（\($0)）" } ?? "") + evidence(t) + "\n" }
+            out += "\n"
+        }
+        if !n.terms.isEmpty {
+            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\n" }.joined() + "\n"
+        }
+        return out
+    }
+
+    /// The written summary as Markdown: the summary and the topics, as prose.
+    static func textSummaryMarkdown(_ n: MeetingNotes) -> String {
+        var out = ""
+        if !n.summary.isEmpty { out += "\(n.summary)\n\n" }
+        for t in n.topics {
+            out += "### \(clock(t.start)) \(t.title)\n\n"
+            if !t.summary.isEmpty { out += "\(t.summary)\n\n" }
+            for p in t.points { out += "- \(p)\n" }
+            out += "\n"
+        }
+        if !n.conclusions.isEmpty {
+            out += "### \(L("结论"))\n\n" + n.conclusions.map { "- \($0.text)\n" }.joined() + "\n"
+        }
+        if !n.todos.isEmpty {
+            out += "### \(L("待办"))\n\n"
+            + n.todos.map { "- [ ] \($0.text)" + ($0.owner.map { "（\($0)）" } ?? "") + "\n" }.joined() + "\n"
+        }
+        if !n.terms.isEmpty {
+            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\n" }.joined() + "\n"
+        }
+        return out
+    }
+
+    /// "（依据 3 句 · 12:04）": how much of the meeting a conclusion rests on, and when it was said.
+    private static func evidence(_ item: NoteItem) -> String {
+        var parts: [String] = []
+        if item.support > 0 { parts.append(L("依据 \(item.support) 句")) }
+        if let t = item.t { parts.append(clock(t)) }
+        return parts.isEmpty ? "" : "（" + parts.joined(separator: " · ") + "）"
+    }
+
+    static func markdown(_ s: Session, options: ExportOptions = ExportOptions()) -> String {
+        var out = "# \(s.displayTitle)\n\n\(header(s))\n\n"
+        if options.aiView, let n = s.notes {
+            let part = aiViewMarkdown(n)
+            if !part.isEmpty { out += "## \(L("AI 视图"))\n\n" + part + "\n" }
+        }
+        if options.textSummary, let n = s.notes {
+            let part = textSummaryMarkdown(n)
+            if !part.isEmpty { out += "## \(L("文字总结"))\n\n" + part + "\n" }
+        }
+        if options.transcript {
+            out += "## \(L("原始记录"))\n\n"
+            let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
+            for l in s.lines {
+                out += "**[\(clock(l.t))] \(speakerName(l, numbers, names))**  \n\(l.corrected ?? l.src)\n"
+                if let d = l.dst, d != l.corrected ?? l.src { out += "> \(d)\n" }
+                out += "\n"
+            }
         }
         return out
     }
@@ -400,14 +506,14 @@ enum TranscriptExport {
         return out
     }
 
-    static func docx(_ s: Session) throws -> Data {
-        let doc = styledDocument(s)
+    static func docx(_ s: Session, options: ExportOptions = ExportOptions()) throws -> Data {
+        let doc = styledDocument(s, options: options)
         return try doc.data(from: NSRange(location: 0, length: doc.length),
                             documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
     }
 
-    static func pdf(_ s: Session) -> Data {
-        let doc = styledDocument(s)
+    static func pdf(_ s: Session, options: ExportOptions = ExportOptions()) -> Data {
+        let doc = styledDocument(s, options: options)
         let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8) // A4
         let inset = CGRect(x: 48, y: 48, width: page.width - 96, height: page.height - 96)
         let data = NSMutableData()
@@ -431,7 +537,7 @@ enum TranscriptExport {
         return data as Data
     }
 
-    private static func styledDocument(_ s: Session) -> NSMutableAttributedString {
+    static func styledDocument(_ s: Session, options: ExportOptions = ExportOptions()) -> NSMutableAttributedString {
         let doc = NSMutableAttributedString()
         func add(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .black, after: CGFloat = 4) {
             let p = NSMutableParagraphStyle()
@@ -442,16 +548,15 @@ enum TranscriptExport {
                 .paragraphStyle: p,
             ]))
         }
-        add(s.displayTitle, size: 20, weight: .bold, after: 6)
-        add(header(s), size: 10, color: .darkGray, after: 14)
-        if let n = s.notes, !n.isEmpty {
-            add(L("纪要"), size: 15, weight: .bold, after: 6)
+        /// The notes in one of the two readings: the visualization (the fishbone and the
+        /// grounds the conclusions rest on) or the written summary.
+        func notes(_ n: MeetingNotes, aiView: Bool) {
             if !n.summary.isEmpty { add(n.summary, size: 11, after: 10) }
             for t in n.topics {
                 add("\(clock(t.start))  \(t.title)", size: 12, weight: .semibold, after: 3)
                 if !t.summary.isEmpty { add(t.summary, size: 11, color: .darkGray, after: 3) }
                 for p in t.points { add("• \(p)", size: 11, after: 2) }
-                if let f = t.fishbone {
+                if aiView, let f = t.fishbone {
                     let q = f.question.isEmpty ? L("为什么") : f.question
                     add(q, size: 11, weight: .semibold, after: 2)
                     for b in f.branches { add("  – \(b.label)：\(b.detail)", size: 11, after: 2) }
@@ -460,12 +565,14 @@ enum TranscriptExport {
             }
             if !n.conclusions.isEmpty {
                 add(L("结论"), size: 12, weight: .semibold, after: 3)
-                for c in n.conclusions { add("• \(c.text)", size: 11, after: 2) }
+                for c in n.conclusions { add("• \(c.text)" + (aiView ? evidence(c) : ""), size: 11, after: 2) }
                 add("", size: 6, after: 4)
             }
             if !n.todos.isEmpty {
                 add(L("待办"), size: 12, weight: .semibold, after: 3)
-                for t in n.todos { add("☐ \(t.text)" + (t.owner.map { "（\($0)）" } ?? ""), size: 11, after: 2) }
+                for t in n.todos {
+                    add("☐ \(t.text)" + (t.owner.map { "（\($0)）" } ?? "") + (aiView ? evidence(t) : ""), size: 11, after: 2)
+                }
                 add("", size: 6, after: 4)
             }
             if !n.terms.isEmpty {
@@ -473,14 +580,26 @@ enum TranscriptExport {
                 for t in n.terms { add("• \(t.name) \(t.note)", size: 11, after: 2) }
                 add("", size: 6, after: 4)
             }
-            add(L("文字记录"), size: 15, weight: .bold, after: 6)
         }
-        let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
-        for l in s.lines {
-            add("[\(clock(l.t))] \(speakerName(l, numbers, names))", size: 9, weight: .semibold, color: .darkGray, after: 2)
-            let text = l.corrected ?? l.src
-            add(text, size: 11, after: 2)
-            if let d = l.dst, d != text { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
+        add(s.displayTitle, size: 20, weight: .bold, after: 6)
+        add(header(s), size: 10, color: .darkGray, after: 14)
+        if options.aiView, let n = s.notes, !n.isEmpty {
+            add(L("AI 视图"), size: 15, weight: .bold, after: 6)
+            notes(n, aiView: true)
+        }
+        if options.textSummary, let n = s.notes, !n.isEmpty {
+            add(L("文字总结"), size: 15, weight: .bold, after: 6)
+            notes(n, aiView: false)
+        }
+        if options.transcript {
+            add(L("原始记录"), size: 15, weight: .bold, after: 6)
+            let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
+            for l in s.lines {
+                add("[\(clock(l.t))] \(speakerName(l, numbers, names))", size: 9, weight: .semibold, color: .darkGray, after: 2)
+                let text = l.corrected ?? l.src
+                add(text, size: 11, after: 2)
+                if let d = l.dst, d != text { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
+            }
         }
         return doc
     }

@@ -88,6 +88,10 @@ final class AppModel: ObservableObject {
     @Published var onboardingSpeakSetup: Bool?
     /// Debug: which meeting and tab the main window shows ("<id>" or "<id>,transcript").
     @Published var mainShow: String?
+    /// The meeting the export panel is for, while it is open.
+    @Published var exportRequest: ExportRequest?
+    /// What the file should contain, and in which format.
+    @Published var exportOptions = ExportOptions()
     /// Hold right ⌥ is chosen but "输入监控" isn't allowed yet.
     @Published var talkNeedsPermission = false
     @Published var toggleKeyTaken = false
@@ -129,6 +133,8 @@ final class AppModel: ObservableObject {
     /// Opens the records window, never minimising it: everything that names a meeting means
     /// "show me that one".
     var openMainWindow: (() -> Void)?
+    /// Opens the export panel.
+    var showExportPanel: (() -> Void)?
     var openSettingsWindow: (() -> Void)?
     var showPanel: (() -> Void)?
     /// Opens the menu bar panel, leaving it open if it already is: the main window's button
@@ -1475,10 +1481,16 @@ final class AppModel: ObservableObject {
         export(session, kind: kind)
     }
 
-    func export(_ session: Session, kind: String) {
+    /// Opens the export panel for a meeting: what goes into the file, and in which format.
+    func requestExport(_ session: Session) {
+        exportRequest = ExportRequest(id: session.id, session: session)
+        showExportPanel?()
+    }
+
+    func export(_ session: Session, kind: String, options: ExportOptions = ExportOptions()) {
         if kind == "copy" {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(TranscriptExport.markdown(session), forType: .string)
+            NSPasteboard.general.setString(TranscriptExport.markdown(session, options: options), forType: .string)
             return
         }
         let panel = NSSavePanel()
@@ -1494,24 +1506,24 @@ final class AppModel: ObservableObject {
         if let w = NSApp.keyWindow, !(w is NSPanel), w.isVisible {
             panel.beginSheetModal(for: w) { [weak self] r in
                 guard r == .OK, let url = panel.url else { return }
-                MainActor.assumeIsolated { _ = self?.writeExport(session, kind: kind, to: url) }
+                MainActor.assumeIsolated { _ = self?.writeExport(session, kind: kind, options: options, to: url) }
             }
             return
         }
         NSApp.activate()
         panel.level = .modalPanel
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        writeExport(session, kind: kind, to: url)
+        writeExport(session, kind: kind, options: options, to: url)
     }
 
     @discardableResult
-    func writeExport(_ session: Session, kind: String, to url: URL) -> Bool {
+    func writeExport(_ session: Session, kind: String, options: ExportOptions = ExportOptions(), to url: URL) -> Bool {
         do {
             switch kind {
-            case "word": try TranscriptExport.docx(session).write(to: url)
+            case "word": try TranscriptExport.docx(session, options: options).write(to: url)
             case "srt": try TranscriptExport.srt(session).write(to: url, atomically: true, encoding: .utf8)
-            case "pdf": try TranscriptExport.pdf(session).write(to: url)
-            default: try TranscriptExport.markdown(session).write(to: url, atomically: true, encoding: .utf8)
+            case "pdf": try TranscriptExport.pdf(session, options: options).write(to: url)
+            default: try TranscriptExport.markdown(session, options: options).write(to: url, atomically: true, encoding: .utf8)
             }
             return true
         } catch {
@@ -1972,6 +1984,29 @@ final class AppModel: ObservableObject {
                     try? full.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: arg + ".notes.png"))
                 }
             }
+        case "exportPanel":
+            // exportPanel:<session id>: the export panel for that meeting.
+            if !arg.isEmpty, let s = store.session(arg) { requestExport(s) }
+        case "exportRender":
+            // exportRender:<session id>=<png>: the export panel as drawn.
+            let p = arg.split(separator: "=", maxSplits: 1).map(String.init)
+            guard p.count == 2, let s = store.session(p[0]) else { break }
+            exportRequest = ExportRequest(id: s.id, session: s)
+            // The live window when there is one: the format picker is a real control and only
+            // draws itself in a window.
+            if let view = NSApp.windows.first(where: { $0.contentView is NSHostingView<ExportSheet> })?.contentView,
+               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: p[1]))
+                break
+            }
+            let view = ExportSheet(model: self).frame(width: 440, height: 340).background(Color.white)
+            let r = ImageRenderer(content: view)
+            r.scale = 2
+            if let img = r.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+               let png = rep.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: p[1]))
+            }
         case "panelRender":
             // The menu bar panel drawn offscreen with real AppKit controls: the popover closes
             // as soon as another app is active, so it can't be caught by windowsRender.
@@ -2132,6 +2167,29 @@ final class AppModel: ObservableObject {
                 let ok = writeExport(s, kind: kind, to: dir.appendingPathComponent("export.\(ext)"))
                 debugLog("export \(ext) ok=\(ok)")
             }
+        case "exportPick":
+            // exportPick:ai,text,lines@pdf (or "all"/"none"): what the panel has ticked, and in
+            // which format.
+            let p = arg.split(separator: "@").map(String.init)
+            let picks = p.first?.split(separator: ",").map(String.init) ?? []
+            if picks == ["all"] {
+                exportOptions = ExportOptions()
+            } else if picks == ["none"] {
+                exportOptions.aiView = false
+                exportOptions.textSummary = false
+                exportOptions.transcript = false
+            } else {
+                exportOptions.aiView = picks.contains("ai")
+                exportOptions.textSummary = picks.contains("text")
+                exportOptions.transcript = picks.contains("lines")
+            }
+            if p.count > 1, let f = ExportOptions.Format(rawValue: p[1]) { exportOptions.format = f }
+        case "exportWrite":
+            // exportWrite:<session id>=<path>: write the export with the panel's choices, no save panel.
+            let p = arg.split(separator: "=", maxSplits: 1).map(String.init)
+            guard p.count == 2, let s = store.session(p[0]) else { break }
+            let ok = writeExport(s, kind: exportOptions.format.rawValue, options: exportOptions, to: URL(fileURLWithPath: p[1]))
+            debugLog("export write ok=\(ok) kind=\(exportOptions.format.rawValue) ai=\(exportOptions.aiView) text=\(exportOptions.textSummary) lines=\(exportOptions.transcript)")
         default: break
         }
     }
@@ -2150,6 +2208,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var deviceWork: DispatchWorkItem?
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    /// The export panel: its own window, so it can be opened from the records window, the
+    /// recording page and the menu bar alike.
+    private var exportWindow: NSWindow?
     private var pollTimer: Timer?
     private var runningObserver: Any?
     private var popoverClickMonitor: Any?
@@ -2164,6 +2225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.install()
         setupStatusItem()
         model.openMainWindow = { [weak self] in self?.showMainWindow() }
+        model.showExportPanel = { [weak self] in self?.presentExportPanel() }
         model.toggleMainWindow = { [weak self] in self?.toggleMainWindow() }
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
@@ -2336,6 +2398,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate()
     }
 
+    /// The export panel, in a window of its own so it can be opened from anywhere. It asks
+    /// what goes into the file and in which format; the file itself is chosen afterwards.
+    func presentExportPanel() {
+        guard model.exportRequest != nil else { return }
+        if exportWindow == nil {
+            let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 340),
+                             styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            w.title = L("导出会议记录")
+            w.isReleasedWhenClosed = false
+            w.delegate = self
+            w.center()
+            exportWindow = w
+        }
+        exportWindow?.contentViewController = NSHostingController(rootView: ExportSheet(model: model) { [weak self] in
+            self?.closeExportPanel()
+        })
+        exportWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    func closeExportPanel() {
+        model.exportRequest = nil
+        exportWindow?.close()
+    }
+
     /// The pill's way back to the records: a double click opens the window, and a double click
     /// on the open window puts it away again.
     func toggleMainWindow() {
@@ -2396,6 +2483,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         let w = notification.object as? NSWindow
         updateActivationPolicy(closing: w)
+        if w == exportWindow {
+            model.exportRequest = nil
+        }
         if w == onboardingWindow {
             model.sample.stop()
             UserDefaults.standard.set(true, forKey: "onboarded")
