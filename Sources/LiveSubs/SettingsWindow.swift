@@ -717,6 +717,10 @@ struct SettingsView: View {
                     Toggle("保存会议录音", isOn: $settings.recordAudio)
                         .toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Palette.ink)
                 }
+                SettingsRow(title: L("识别后自动纠错"), detail: L("录音结束后在后台润色同音字/错字/标点；原文保留可对照")) {
+                    Toggle("识别后自动纠错", isOn: $settings.recordAutoCorrect)
+                        .toggleStyle(.switch).labelsHidden().controlSize(.small).tint(Palette.ink)
+                }
                 SettingsRow(title: L("记录文件夹"), divider: false) {
                     SoftButton(L("打开")) { NSWorkspace.shared.open(model.store.root) }
                 }

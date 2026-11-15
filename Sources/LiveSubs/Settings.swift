@@ -62,6 +62,10 @@ final class AppSettings: ObservableObject {
     @Published var recordAudio: Bool {
         didSet { save() }
     }
+    /// 录音结束后在后台自动润色转写（同音字/错字/标点），不改说话人和时间；原文保留可对照。
+    @Published var recordAutoCorrect: Bool {
+        didSet { save() }
+    }
     /// Subtitle bar: show only while someone talks ("auto") or always.
     @Published var overlayAuto: Bool {
         didSet { save() }
@@ -156,6 +160,7 @@ final class AppSettings: ObservableObject {
         speakMic = defaults.string(forKey: "speakMic") ?? ""
         savedSystemInput = defaults.string(forKey: "savedSystemInput") ?? ""
         recordAudio = defaults.object(forKey: "recordAudio") as? Bool ?? true
+        recordAutoCorrect = defaults.bool(forKey: "recordAutoCorrect")
         overlayAuto = defaults.object(forKey: "overlayAuto") as? Bool ?? true
         overlayHideAfter = defaults.object(forKey: "overlayHideAfter") as? Double ?? 4
         talkKey = Shortcut(stored: defaults.string(forKey: "talkKey")) ?? .defaultTalk
@@ -203,6 +208,7 @@ final class AppSettings: ObservableObject {
         defaults.set(speakMic, forKey: "speakMic")
         defaults.set(savedSystemInput, forKey: "savedSystemInput")
         defaults.set(recordAudio, forKey: "recordAudio")
+        defaults.set(recordAutoCorrect, forKey: "recordAutoCorrect")
         defaults.set(overlayAuto, forKey: "overlayAuto")
         defaults.set(overlayHideAfter, forKey: "overlayHideAfter")
         defaults.set(talkKey.stored, forKey: "talkKey")

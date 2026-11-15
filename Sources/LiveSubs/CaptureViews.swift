@@ -76,7 +76,7 @@ struct CaptureView: View {
         .overlay {
             // The passage from the recording to the meeting record.
             if let saving = model.recordSaving {
-                RecordSavingView(saving: saving) { model.openSavedMeeting() }
+                RecordSavingView(saving: saving, onOpen: { model.openSavedMeeting() }, correcting: model.recordCorrecting)
                     .transition(.opacity)
             }
         }
@@ -226,7 +226,7 @@ struct CaptureView: View {
     @State private var editingTitle = false
 
     private var titleRow: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 0) {
             if source == .mic, model.activeRecordingSessionID != nil {
                 HStack(spacing: 8) {
                     if editingTitle {
@@ -255,6 +255,12 @@ struct CaptureView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, 20).padding(.top, 10).padding(.bottom, 6)
+            }
+            // The polishing runs after the recording ends: the words below still change.
+            // Only while the recording's own words are the ones on the left.
+            if model.recordCorrecting, source == .mic {
+                PolishingHint()
+                    .padding(.horizontal, 20).padding(.bottom, 8)
             }
         }
         .onChange(of: model.activeRecordingSessionID) { _, _ in
@@ -625,7 +631,7 @@ struct CaptureView: View {
                 .help(L("从这里播放"))
             }
             Button {
-                editText = line.text
+                editText = line.corrected ?? line.text
                 editing = line.id
             } label: {
                 Image(systemName: "pencil").font(.system(size: 10))
@@ -659,26 +665,62 @@ struct CaptureView: View {
     @ViewBuilder
     private func texts(_ line: RecordLine) -> some View {
         let translation = line.translation.flatMap { $0.isEmpty ? nil : $0 }
+        let shown = line.corrected ?? line.text
+        let isCorrected = line.corrected != nil && line.corrected != line.text
         switch feed.display {
         case .original:
-            Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(shown).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if isCorrected {
+                    correctedBadge(line)
+                }
+            }
         case .translated:
             if let translation {
                 Text(translation).font(.system(size: 14)).foregroundStyle(Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(shown).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if isCorrected { correctedBadge(line) }
+                }
             }
         case .bilingual:
-            Text(line.text).font(.system(size: 14)).foregroundStyle(Palette.ink)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(shown).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                    .fixedSize(horizontal: false, vertical: true)
+                if isCorrected { correctedBadge(line) }
+            }
             if let translation {
                 Text(translation).font(.system(size: 13)).foregroundStyle(Palette.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    @ViewBuilder
+    private func correctedBadge(_ line: RecordLine) -> some View {
+        Menu {
+            Button(L("查看原文")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(line.text, forType: .string)
+            }
+            Button(L("撤销纠错")) {
+                engine.clearCorrection(line.id)
+            }
+            Button(L("重新纠错")) {
+                engine.recorrect(lineID: line.id, glossary: model.notes.glossary)
+            }
+        } label: {
+            Text("✦ " + L("已润色"))
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.tertiary)
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .help(line.text)
     }
 
     /// The box the words are corrected in.
@@ -707,11 +749,15 @@ struct CaptureView: View {
     /// A corrected sentence: the microphone's own copy and the meeting record are both
     /// written; the system audio's copy is only in the meeting record.
     private func save(_ id: String) {
+        let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
         if source == .mic {
-            engine.edit(id, text: editText)
+            // Check if this line currently has a correction (before editing)
+            let hasCorrection = engine.lines.first(where: { $0.id == id })?.corrected != nil
+            engine.edit(id, text: text, correct: hasCorrection)
         } else if let i = feed.lines.firstIndex(where: { $0.id == id }) {
-            let text = editText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, text != feed.lines[i].text else { return }
+            guard text != feed.lines[i].text else { return }
             feed.lines[i].text = text
             model.store.setSource(lineID: id, text)
         }
@@ -1059,3 +1105,19 @@ extension MeetingNotes {
     var notesCoveredClock: Double? { covered > 0 ? Double(covered) : nil }
 }
 
+// MARK: - Polishing
+
+/// The line that says the words are being polished in the background.
+///
+/// The polishing runs after the recording ends and takes a while, so the reader is told: the
+/// sentences they are reading will still change under them.
+struct PolishingHint: View {
+    var body: some View {
+        HStack(spacing: 6) {
+            BreathingDot(size: 5)
+            Text(L("正在润色…")).font(.system(size: 12)).foregroundStyle(Palette.tertiary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(L("正在润色…"))
+    }
+}

@@ -13,6 +13,8 @@ struct TranscriptLine: Codable, Identifiable, Equatable {
     var dstLang: String
     /// Experimental: which of the other side's voices said it (SpeakerID.swift); nil when unknown.
     var voice: Int? = nil
+    /// AI 纠错后的文本；nil = 未纠错或纠错后无变化。保留原始 `src` 以便对照/回滚。
+    var corrected: String? = nil
 }
 
 /// A name Ling found for a voice, and the line it is based on ("00:06 “Sure, Emma…”").
@@ -210,6 +212,26 @@ final class SessionStore: ObservableObject {
         scheduleSave(sessionID)
     }
 
+    /// The same, but for a session that is not the live one: a recording can be corrected
+    /// after it has ended.
+    func setCorrected(in sessionID: String, lineID: String, _ text: String?) {
+        guard let i = index(sessionID),
+              let j = sessions[i].lines.firstIndex(where: { $0.id == lineID }) else { return }
+        sessions[i].lines[j].corrected = text
+        scheduleSave(sessionID)
+    }
+
+    /// Applies AI corrections to recorded lines of an ended session. `nil` clears the correction
+    /// for that line (undo). Lines not found are skipped.
+    func updateCorrections(in sessionID: String, _ corrections: [(lineID: String, corrected: String?)]) {
+        guard let i = index(sessionID) else { return }
+        for c in corrections {
+            guard let j = sessions[i].lines.firstIndex(where: { $0.id == c.lineID }) else { continue }
+            sessions[i].lines[j].corrected = c.corrected
+        }
+        scheduleSave(sessionID)
+    }
+
     /// The user names a voice. nil drops their name (Ling's guess shows again); "" keeps 说话人 N.
     func setVoiceName(_ id: String, voice: Int, _ name: String?) {
         guard let i = index(id) else { return }
@@ -355,8 +377,8 @@ enum TranscriptExport {
         if !notes.isEmpty { out += notes + "## \(L("文字记录"))\n\n" }
         let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
         for l in s.lines {
-            out += "**[\(clock(l.t))] \(speakerName(l, numbers, names))**  \n\(l.src)\n"
-            if let d = l.dst, d != l.src { out += "> \(d)\n" }
+            out += "**[\(clock(l.t))] \(speakerName(l, numbers, names))**  \n\(l.corrected ?? l.src)\n"
+            if let d = l.dst, d != l.corrected ?? l.src { out += "> \(d)\n" }
             out += "\n"
         }
         return out
@@ -371,8 +393,8 @@ enum TranscriptExport {
         for (i, l) in s.lines.enumerated() {
             let next = i + 1 < s.lines.count ? s.lines[i + 1].t : l.t + 4
             let end = max(l.t + 1, min(next, l.t + 8))
-            out += "\(i + 1)\n\(ts(l.t)) --> \(ts(end))\n\(l.src)\n"
-            if let d = l.dst, d != l.src { out += "\(d)\n" }
+            out += "\(i + 1)\n\(ts(l.t)) --> \(ts(end))\n\(l.corrected ?? l.src)\n"
+            if let d = l.dst, d != l.corrected ?? l.src { out += "\(d)\n" }
             out += "\n"
         }
         return out
@@ -417,8 +439,9 @@ enum TranscriptExport {
         let numbers = speakerNumbers(s), names = SpeakerLabels.names(s)
         for l in s.lines {
             add("[\(clock(l.t))] \(speakerName(l, numbers, names))", size: 9, weight: .semibold, color: .darkGray, after: 2)
-            add(l.src, size: 11, after: 2)
-            if let d = l.dst, d != l.src { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
+            let text = l.corrected ?? l.src
+            add(text, size: 11, after: 2)
+            if let d = l.dst, d != text { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
         }
         return try doc.data(from: NSRange(location: 0, length: doc.length),
                             documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])

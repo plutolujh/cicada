@@ -582,6 +582,17 @@ final class AppModel: ObservableObject {
         recorder.onRewrite = { [weak self] in
             self?.recordRewrite()
         }
+        recorder.onAutoCorrect = { [weak self] in
+            self?.syncCorrectionsToStore()
+        }
+        recorder.onCorrecting = { [weak self] working in
+            guard let self else { return }
+            if working {
+                self.polishingSessionID = self.recordSessionID
+            } else if self.polishingSessionID == self.recordSessionID {
+                self.polishingSessionID = nil
+            }
+        }
         // The toolbar pill watches micState; keep it in step with the engine immediately,
         // instead of waiting for the 0.1s capture tick.
         recorder.onState = { [weak self] state in
@@ -622,6 +633,10 @@ final class AppModel: ObservableObject {
         // One last pass over the whole recording, so the saved record reads like a finished
         // meeting: the full notes, not the quick ones.
         notes.finish()
+        // Auto-correction runs after recording ends: paragraph-level, non-blocking.
+        if settings.recordAutoCorrect {
+            recorder.runAutoCorrect(glossary: notes.glossary)
+        }
         refresh()
         // What was saved is shown for a moment, so the recording does not simply vanish into
         // the meeting list.
@@ -661,7 +676,8 @@ final class AppModel: ObservableObject {
     private func appendRecorded(_ line: RecordLine) {
         guard recordSessionID != nil else { return }
         store.append(TranscriptLine(id: line.id, t: line.t, speaker: "them", src: line.text,
-                                    dst: line.translation, srcLang: line.lang, dstLang: target))
+                                    dst: line.translation, srcLang: line.lang, dstLang: target,
+                                    voice: line.voice, corrected: line.corrected))
         // Someone spoke: the quiet timer starts over.
         recordWatch?.heard(at: Date())
         setEnding(recordWatch?.pending)
@@ -687,8 +703,17 @@ final class AppModel: ObservableObject {
         guard let session = recordSessionID else { return }
         store.replaceLines(in: session, recorder.lines.map {
             TranscriptLine(id: $0.id, t: $0.t, speaker: "them", src: $0.text,
-                           dst: $0.translation, srcLang: $0.lang, dstLang: target, voice: $0.voice)
+                           dst: $0.translation, srcLang: $0.lang, dstLang: target,
+                           voice: $0.voice, corrected: $0.corrected)
         })
+    }
+
+    /// 把引擎里已纠正的行回写到 SessionStore，供持久化和导出。
+    private func syncCorrectionsToStore() {
+        guard let id = recordSessionID else { return }
+        // Sync all lines that have been considered (corrected or explicitly cleared)
+        let corrections = recorder.lines.map { (lineID: $0.id, corrected: $0.corrected) }
+        store.updateCorrections(in: id, corrections)
     }
 
     /// The menu (⌘R) and the panel switch: a meeting with lines is ended only after asking, with
@@ -921,6 +946,11 @@ final class AppModel: ObservableObject {
 
     /// The meeting being recorded, while one is.
     private var recordSessionID: String?
+    /// The meeting whose words are being polished right now, if any. The surfaces say so: the
+    /// sentences change under the reader while the service is working.
+    @Published private(set) var polishingSessionID: String?
+    /// Whether the recording's own words are being polished.
+    var recordCorrecting: Bool { polishingSessionID != nil && polishingSessionID == recordSessionID }
     /// The session currently being recorded by the microphone path, for UI that needs it.
     var activeRecordingSessionID: String? { recordSessionID }
     /// The title shown for the recording in progress: the automatic name (e.g. notes title/date)
@@ -959,6 +989,8 @@ final class AppModel: ObservableObject {
     @Published var recordKeepsAudio: Bool {
         didSet { UserDefaults.standard.set(recordKeepsAudio, forKey: "recordKeepsAudio") }
     }
+    /// 自动润色录音转写（识别后后台纠错同音字/错字/标点）。
+    var recordAutoCorrect: Bool { settings.recordAutoCorrect }
 
     func enableSpeaking(_ on: Bool) {
         settings.speakEnabled = on

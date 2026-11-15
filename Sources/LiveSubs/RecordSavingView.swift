@@ -10,7 +10,8 @@ struct RecordSavingView: View {
     let saving: RecordSaving
     /// Opens the meeting the recording became.
     var onOpen: () -> Void = {}
-
+    /// The words are being polished in the background: the record says so.
+    var correcting = false
     @State private var landed: Set<RecordSaving.Part> = []
     /// All the parts have landed and the record is complete: only then the user is asked to
     /// confirm and open the meeting record.
@@ -54,6 +55,11 @@ struct RecordSavingView: View {
                     Text(L("\(saving.lines) 句 · \(RecordEngine.clock(saving.duration))"))
                         .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
                         .padding(.top, 14)
+
+                    // The polishing runs after the recording ends; the record says so.
+                    if correcting {
+                        PolishingHint().padding(.top, 10)
+                    }
 
                     HStack(spacing: 8) {
                         Button(action: onOpen) {

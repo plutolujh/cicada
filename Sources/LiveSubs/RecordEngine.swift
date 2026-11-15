@@ -35,6 +35,10 @@ struct RecordLine: Identifiable, Equatable {
     var end: Double?
     /// When each word of the sentence was said, so the words can be stepped through.
     var words: [LiveWord] = []
+    /// AI 纠错后的文本；nil = 未纠错或纠错后无变化。保留原始 `text` 以便对照/回滚。
+    var corrected: String?
+
+    var displayText: String { corrected ?? text }
 }
 
 /// The numbers the people of a recording are shown under: 人物 1, 人物 2, 人物 3…
@@ -134,6 +138,10 @@ final class RecordEngine: ObservableObject {
     var onEdit: ((String) -> Void)?
     /// Called when the sentences of the recording change, so the record is rewritten.
     var onRewrite: (() -> Void)?
+    /// Called when the sentences of the recording change, so the record is rewritten.
+    var onAutoCorrect: (() -> Void)?
+    /// Called when the polishing starts and when it is done, so the surfaces can say so.
+    var onCorrecting: ((Bool) -> Void)?
     /// Called whenever the recording state changes, so the toolbar pill stays in step.
     var onState: ((State) -> Void)?
     /// The languages a model is installed for.
@@ -266,6 +274,8 @@ final class RecordEngine: ObservableObject {
         state = .idle
         onState?(.idle)
         debugLog("record: stopped lines=\(lines.count)")
+        // Auto-correction runs after recording ends; caller should call runAutoCorrect(glossary:)
+        // which is triggered by AppModel.
     }
 
     /// Pauses the recording: the microphone stays on but no new sentences are transcribed and
@@ -816,13 +826,29 @@ final class RecordEngine: ObservableObject {
     // MARK: The editing
 
     /// Changes the words of a sentence: what was heard can be corrected.
-    func edit(_ id: String, text: String) {
+    func edit(_ id: String, text: String, correct: Bool = false) {
         guard let i = lines.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != lines[i].text else { return }
-        lines[i].text = trimmed
-        debugLog("record: edit \(id)")
-        onEdit?(id)
+        guard !trimmed.isEmpty else { return }
+        if correct {
+            if lines[i].corrected == trimmed { return }
+            lines[i].corrected = trimmed
+            debugLog("record: edit corrected \(id)")
+            onAutoCorrect?()
+        } else if lines[i].corrected != nil && lines[i].corrected != lines[i].text {
+            guard trimmed != lines[i].corrected else { return }
+            lines[i].corrected = trimmed
+            debugLog("record: edit corrected \(id)")
+            onAutoCorrect?()
+        } else {
+            guard trimmed != lines[i].text else { return }
+            lines[i].text = trimmed
+            // Manual edit invalidates AI correction
+            lines[i].corrected = nil
+            correctedIDs.remove(id)
+            debugLog("record: edit \(id)")
+            onEdit?(id)
+        }
     }
 
     /// Joins two sentences into one, the way a recording that was cut in half is put back
@@ -893,6 +919,111 @@ final class RecordEngine: ObservableObject {
     nonisolated static func clock(_ t: Double) -> String {
         let total = Int(t.rounded())
         return String(format: "%02d:%02d", total / 60, total % 60)
+    }
+
+    // MARK: Auto-correction
+
+    /// 纠错任务标记，避免并发重复跑。Published so the surfaces can say the polishing is running.
+    @Published private(set) var correcting = false
+    /// 已提交纠错的行 id 集合（避免重复）。
+    private var correctedIDs: Set<String> = []
+
+    /// 在录音结束后后台自动纠错：按静默/说话人/时长切段，逐段发 AI，只改错字/标点。
+    /// `glossary` 取自 NotesEngine 的术语表，提升专名准确率。
+    func runAutoCorrect(glossary: [String] = []) {
+        guard !correcting, let ai, ai.usable else { return }
+        let candidates = lines.filter { $0.corrected == nil && !correctedIDs.contains($0.id) }
+        guard !candidates.isEmpty else { return }
+        correcting = true
+        onCorrecting?(true)
+        debugLog("record: autocorrect start \(candidates.count) lines")
+        Task { [weak self] in
+            guard let self else { return }
+            for seg in Self.segment(candidates) {
+                await self.correctSegment(seg, glossary: glossary, ai: ai)
+            }
+            await MainActor.run {
+                self.correcting = false
+                self.onCorrecting?(false)
+                self.onAutoCorrect?()
+                debugLog("record: autocorrect done")
+            }
+        }
+    }
+
+    /// 按静默间隔、说话人变化、时长上限切段。
+    private static func segment(_ lines: [RecordLine]) -> [[RecordLine]] {
+        guard !lines.isEmpty else { return [] }
+        var segments: [[RecordLine]] = []
+        var current: [RecordLine] = []
+        var segStart = lines[0].t
+        for line in lines {
+            let prev = current.last
+            let gap = prev.map { line.t - ($0.end ?? $0.t) } ?? 0
+            let speakerChange = prev.map { $0.person != nil && line.person != nil && $0.person != line.person } ?? false
+            let tooLong = line.t - segStart > 60
+            if !current.isEmpty && (gap > 3.0 || speakerChange || tooLong) {
+                segments.append(current)
+                current = []
+                segStart = line.t
+            }
+            current.append(line)
+        }
+        if !current.isEmpty { segments.append(current) }
+        return segments
+    }
+
+    private func correctSegment(_ seg: [RecordLine], glossary: [String], ai: AIClient) async {
+        let items = seg.map {
+            Corrector.Item(id: $0.id, t: $0.t, speaker: $0.person.map { "人物\($0)" } ?? "说话人", text: $0.text)
+        }
+        let ends = Dictionary(uniqueKeysWithValues: seg.map { ($0.id, $0.end ?? $0.t) })
+        let fixed = await Corrector.correct(items: items, endTimes: ends, glossary: glossary, ai: ai)
+        await MainActor.run { [weak self] in
+            guard let self else { return }
+            var changed = 0
+            for (id, text) in fixed {
+                self.correctedIDs.insert(id)
+                guard let idx = self.lines.firstIndex(where: { $0.id == id }) else { continue }
+                self.lines[idx].corrected = text
+                changed += 1
+            }
+            if changed > 0 {
+                debugLog("record: autocorrect applied \(changed)/\(seg.count) in segment")
+                self.onAutoCorrect?()
+            }
+        }
+    }
+
+    /// Clears correction for a line (undo).
+    func clearCorrection(_ lineID: String) {
+        guard let idx = lines.firstIndex(where: { $0.id == lineID }) else { return }
+        lines[idx].corrected = nil
+        correctedIDs.remove(lineID)
+        onAutoCorrect?()
+    }
+
+    /// Re-run correction for a specific line's segment (finds its segment and corrects that batch).
+    func recorrect(lineID: String, glossary: [String] = []) {
+        guard let ai, ai.usable else { return }
+        guard let target = lines.first(where: { $0.id == lineID }) else { return }
+        // Find segment containing this line using same segmentation logic
+        let all = lines
+        let segments = Self.segment(all)
+        guard let seg = segments.first(where: { $0.contains(where: { $0.id == lineID }) }) else { return }
+        // Clear existing corrections in segment so they can be re-applied
+        for l in seg {
+            if let idx = lines.firstIndex(where: { $0.id == l.id }) {
+                lines[idx].corrected = nil
+                correctedIDs.remove(l.id)
+            }
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            await self.correctSegment(seg, glossary: glossary, ai: ai)
+            await MainActor.run { self.onAutoCorrect?() }
+        }
+        _ = target
     }
 
     /// Fills the recorder with sample lines and a summary, so the surface can be looked at

@@ -1021,6 +1021,10 @@ struct MainWindowView: View {
                 titleDraft = ""
             }
             tabsRow(s).padding(.top, 24)
+            // The words are still being polished: they change under the reader.
+            if model.polishingSessionID == s.id {
+                PolishingHint().padding(.top, 12)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
