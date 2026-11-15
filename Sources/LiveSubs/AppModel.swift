@@ -716,6 +716,47 @@ final class AppModel: ObservableObject {
         store.updateCorrections(in: id, corrections)
     }
 
+    /// Undoes the polish of one sentence in a saved meeting.
+    ///
+    /// The recording still holds its own copy, so the engine is told too: otherwise the next
+    /// sync would write the correction back and the undo would not last.
+    func clearCorrection(in sessionID: String, lineID: String) {
+        if sessionID == recordSessionID {
+            recorder.clearCorrection(lineID)
+        } else {
+            store.setCorrected(in: sessionID, lineID: lineID, nil)
+        }
+    }
+
+    /// Polishes one sentence of a saved meeting again, with the same service that polished it
+    /// before: the sentence and its neighbours go out together, so the wording stays consistent.
+    func recorrect(in sessionID: String, lineID: String) {
+        guard ai.usable, let session = store.session(sessionID) else { return }
+        guard session.lines.contains(where: { $0.id == lineID }) else { return }
+        let items = session.lines.map {
+            Corrector.Item(id: $0.id, t: $0.t, speaker: $0.speaker, text: $0.src)
+        }
+        let ends = Dictionary(uniqueKeysWithValues: session.lines.map { ($0.id, $0.t) })
+        // The sentence's own chunk: the pauses and speaker changes around it.
+        let segments = Corrector.segment(items, endTimes: ends)
+        guard let chunk = segments.first(where: { $0.contains { $0.id == lineID } }) else { return }
+        polishingSessionID = sessionID
+        Task {
+            let fixed = await Corrector.correct(items: chunk, endTimes: ends, glossary: notes.glossary, ai: ai)
+            await MainActor.run {
+                for (id, text) in fixed {
+                    self.store.setCorrected(in: sessionID, lineID: id, text)
+                }
+                // The recording still holds the old copy; the record is the one being read.
+                if sessionID == self.recordSessionID {
+                    self.syncCorrectionsToStore()
+                }
+                self.polishingSessionID = nil
+                debugLog("correct: recorrect \(lineID) → \(fixed.count) changed")
+            }
+        }
+    }
+
     /// The menu (⌘R) and the panel switch: a meeting with lines is ended only after asking, with
     /// "继续记录" as the default so a stray Return keeps it going. An empty one just stops.
     func requestStop() {

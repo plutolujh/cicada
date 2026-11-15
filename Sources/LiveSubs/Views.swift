@@ -1080,7 +1080,7 @@ struct MainWindowView: View {
             else if l.speaker == "me" {
                 Text("你").font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.accentInk).padding(.bottom, 2)
             }
-            Text(l.src).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(1)
+            Text(l.corrected ?? l.src).font(.system(size: 12)).foregroundStyle(Palette.secondary).lineSpacing(1)
                 .textSelection(.enabled)
             Text(l.dst ?? L("翻译中…")).font(.system(size: 14)).lineSpacing(2)
                 .foregroundStyle(l.dst == nil ? Palette.secondary : Palette.ink)
@@ -1143,11 +1143,14 @@ struct MainWindowView: View {
                         .foregroundStyle(me ? Palette.accentInk : Palette.secondary)
                 }
                 if view != "dst" {
-                    Text(l.src)
+                    Text(l.corrected ?? l.src)
                         .font(.system(size: view == "src" ? 15 : 13))
                         .foregroundStyle(view == "src" ? Palette.ink : Palette.tertiary)
                         .lineSpacing(2)
                         .textSelection(.enabled)
+                    if let corrected = l.corrected, corrected != l.src {
+                        polishedTag(lineID: l.id, original: l.src)
+                    }
                 }
                 if view != "src" {
                     Text(l.dst ?? L("翻译中…"))
@@ -1159,6 +1162,32 @@ struct MainWindowView: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 12)
+    }
+
+    /// The mark that says the words were polished by the AI; the menu shows the original and
+    /// offers to undo the polish or to do it again.
+    private func polishedTag(lineID: String, original: String) -> some View {
+        Menu {
+            Button(L("查看原文")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(original, forType: .string)
+            }
+            Button(L("重新纠错")) {
+                guard let id = current?.id else { return }
+                model.recorrect(in: id, lineID: lineID)
+            }
+            Button(L("撤销纠错")) {
+                guard let id = current?.id else { return }
+                model.clearCorrection(in: id, lineID: lineID)
+            }
+        } label: {
+            Text("✦ " + L("已润色"))
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.tertiary)
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .help(original)
     }
 }
 
