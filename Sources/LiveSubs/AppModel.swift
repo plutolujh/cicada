@@ -128,6 +128,9 @@ final class AppModel: ObservableObject {
 
     var openMainWindow: (() -> Void)?
     var openSettingsWindow: (() -> Void)?
+    /// Opens the main window without the toggle-to-minimise behaviour: used when a recording ends
+    /// and the user clicks "查看会议记录", so the record opens, never toggles away.
+    var openMainWindowAlways: (() -> Void)?
     var showPanel: (() -> Void)?
     /// Opens the menu bar panel, leaving it open if it already is: the main window's button
     /// means "show me the listener", not "flip the listener".
@@ -671,7 +674,9 @@ final class AppModel: ObservableObject {
             recordSaving = nil
         }
         mainShow = "\(id),notes"
-        openMainWindow?()
+        // A recording just ended: the record is what the user asked for, so it is opened, never
+        // toggled away. The pill's double click is the one that toggles.
+        openMainWindowAlways?()
     }
 
     /// A settled sentence goes into the meeting record, so the recording can be read, exported
@@ -2161,6 +2166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         setupStatusItem()
         model.openMainWindow = { [weak self] in self?.showMainWindow() }
         model.toggleMainWindow = { [weak self] in self?.showMainWindow() }
+        model.openMainWindowAlways = { [weak self] in self?.openMainWindowAlways() }
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
         model.openPanel = { [weak self] in self?.openPopover() }
@@ -2299,14 +2305,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: Main window
 
-    func showMainWindow() {
-        if let w = mainWindow, w.isVisible, w.isKeyWindow {
-            // A double click on the pill when the main window is already in front minimises it:
-            // the pill is the way back to the records, so it is a toggle, not just an opener.
-            w.miniaturize(nil)
-            return
-        }
-        popover.performClose(nil)
+    /// Creates the main window once, reusing it afterwards: opening the record after a recording
+    /// ends should show the same window, not build a new one.
+    func ensureMainWindow() {
         if mainWindow == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 740),
                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -2325,6 +2326,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             w.setFrameAutosaveName("LiveSubsMain")
             mainWindow = w
         }
+    }
+
+    func showMainWindow() {
+        if let w = mainWindow, w.isVisible, w.isKeyWindow {
+            // A double click on the pill when the main window is already in front minimises it:
+            // the pill is the way back to the records, so it is a toggle, not just an opener.
+            w.miniaturize(nil)
+            return
+        }
+        popover.performClose(nil)
+        ensureMainWindow()
+        NSApp.setActivationPolicy(.regular)
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
+
+    /// Opens the main window without the toggle-to-minimise behaviour. Used when a recording
+    /// ends and the user clicks "查看会议记录": the record is what they asked for, so it is
+    /// opened, never toggled away.
+    func openMainWindowAlways() {
+        popover.performClose(nil)
+        ensureMainWindow()
         NSApp.setActivationPolicy(.regular)
         mainWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate()
