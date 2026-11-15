@@ -43,6 +43,12 @@ struct CaptureView: View {
     @State private var editing: String?
     /// The words being corrected.
     @State private var editText = ""
+    /// Which right-pane tab is showing: "ai" (可视化) or "text" (文字总结).
+    @State private var notesTab = "ai"
+    /// Whether the AI view's drawer-style table of contents is open over the visualization.
+    @State private var tocOpen = false
+    /// A moment picked in the notes (a fishbone branch, a time link): the transcript scrolls to it.
+    @State private var jumpToTime: Double?
 
     /// The language the sentences are translated into; "none" leaves them as they were said.
     private var target: String { model.recordTarget }
@@ -527,6 +533,10 @@ struct CaptureView: View {
             .onChange(of: lines.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo("bottom", anchor: .bottom) }
             }
+            .onChange(of: jumpToTime) { _, t in
+                guard let t, let line = lines.first(where: { $0.t >= t - 1 }) else { return }
+                withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(line.id, anchor: .top) }
+            }
         }
     }
 
@@ -724,44 +734,102 @@ struct CaptureView: View {
     /// fishbone, written by the same service and read the same way.
     private var right: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("实时纪要").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
-                Spacer(minLength: 0)
-                if notes.state == .updating {
-                    Text("正在更新…").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
-                } else if !notes.notes.isEmpty {
-                    Button { notes.updateNow() } label: {
-                        Image(systemName: "arrow.clockwise").font(.system(size: 11))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(Palette.secondary).help(L("重新总结"))
-                }
-            }
-            .padding(.horizontal, 20).padding(.vertical, 12)
-
+            notesHeader
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
-
-            ScrollView {
-                if notes.notes.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
-                            .font(.system(size: 14)).foregroundStyle(Palette.secondary)
-                        if !lines.isEmpty {
-                            Text("纪要由 AI 服务整理，需要在设置里填好服务 key。")
-                                .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
+            notesTabs
+            Rectangle().fill(MainWindowView.hairline).frame(height: 1)
+            ScrollViewReader { proxy in
+                ZStack(alignment: .topLeading) {
+                    ScrollView {
+                        if notes.notes.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(lines.isEmpty ? "说几句之后，这里会边听边写。" : "正在整理…")
+                                    .font(.system(size: 14)).foregroundStyle(Palette.secondary)
+                                if !lines.isEmpty {
+                                    Text("纪要由 AI 服务整理，需要在设置里填好服务 key。")
+                                        .font(.system(size: 12)).foregroundStyle(Palette.tertiary)
+                                }
+                            }
+                            .padding(.top, 24).padding(.horizontal, 20)
+                        } else if notesTab == "text" {
+                            NotesContentView(notes: notes.notes, fresh: notes.fresh, live: recording,
+                                             document: true,
+                                             updating: notes.state == .updating,
+                                             summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
+                                             coveredUntil: coveredUntil,
+                                             endedAt: endedAt)
+                            .padding(.horizontal, 20).padding(.vertical, 16)
+                        } else {
+                            AIView(notes: notes.notes, live: recording,
+                                   updating: notes.state == .updating,
+                                   summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
+                                   onJump: { jumpToTime = $0 })
+                            .padding(.horizontal, 20).padding(.vertical, 16)
                         }
                     }
-                    .padding(.top, 24)
-                } else {
-                    NotesContentView(notes: notes.notes, fresh: notes.fresh, live: recording,
-                                     updating: notes.state == .updating,
-                                     summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
-                                     coveredUntil: coveredUntil,
-                                     endedAt: endedAt)
-                        .padding(.horizontal, 20).padding(.vertical, 16)
+                    .scrollIndicators(.never)
+
+                    if notesTab == "ai" && tocOpen {
+                        Color.black.opacity(0.2).ignoresSafeArea()
+                            .onTapGesture { tocOpen = false }
+                        AIToC(notes: notes.notes, isOpen: $tocOpen) { id in
+                            withAnimation { proxy.scrollTo(id, anchor: .top) }
+                        }
+                        .transition(.move(edge: .leading))
+                    }
                 }
             }
-            .scrollIndicators(.never)
         }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Header row: the "实时纪要" title, the re-summarize button, and the hamburger TOC toggle.
+    private var notesHeader: some View {
+        HStack(spacing: 8) {
+            if notesTab == "ai" && !notes.notes.topics.isEmpty {
+                Button { tocOpen = true } label: {
+                    Image(systemName: "line.3.horizontal").font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(.plain).foregroundStyle(Palette.secondary).help(L("目录"))
+            }
+            Text("实时纪要").font(.system(size: 15, weight: .semibold)).foregroundStyle(Palette.ink)
+            Spacer(minLength: 0)
+            if notes.state == .updating {
+                Text("正在更新…").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+            } else if !notes.notes.isEmpty {
+                Button { notes.updateNow() } label: {
+                    Image(systemName: "arrow.clockwise").font(.system(size: 11))
+                }
+                .buttonStyle(.plain).foregroundStyle(Palette.secondary).help(L("重新总结"))
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 12)
+    }
+
+    /// The two tabs: AI 视图 and 文字总结.
+    private var notesTabs: some View {
+        HStack(spacing: 0) {
+            tabButton(L("AI 视图"), id: "ai")
+            tabButton(L("文字总结"), id: "text")
+        }
+        .frame(maxWidth: .infinity)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Palette.fill))
+        .padding(.horizontal, 20).padding(.vertical, 6)
+    }
+
+    private func tabButton(_ title: String, id: String) -> some View {
+        Button { notesTab = id } label: {
+            Text(title).font(.system(size: 13, weight: notesTab == id ? .semibold : .regular))
+                .foregroundStyle(notesTab == id ? Palette.ink : Palette.secondary)
+                .frame(maxWidth: .infinity).frame(height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(notesTab == id ? Color.white : .clear)
+                .shadow(color: .black.opacity(notesTab == id ? 0.08 : 0), radius: 1.5, y: 1)
+        )
     }
 
     /// The capture is still going.
@@ -786,3 +854,208 @@ struct CaptureView: View {
         [("none", L("不翻译"))] + targetLanguages.map { ($0.code, $0.name) }
     }
 }
+
+// MARK: - AI view
+
+/// The "AI 视图" tab: a headline summary, fishbone diagrams per topic, a table of topics,
+/// and a hamburger drawer that overlays the table of contents on tap.
+struct AIView: View {
+    let notes: MeetingNotes
+    var live = false
+    var updating = false
+    var summaryJustChanged = false
+    var onJump: (Double) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if !notes.summary.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(L("总结")).font(.system(size: 15, weight: .bold))
+                        if summaryJustChanged { Tag(L("刚更新"), live: true) }
+                        Spacer()
+                        if notes.final { Tag(L("完整版")) } else if live {
+                            Tag(notes.notesCoveredClock.map { L("速记版 · 到 \(NotesEngine.clock($0))") } ?? L("速记版"))
+                        }
+                    }
+                    Text(notes.summary).font(.system(size: 14)).lineSpacing(4).textSelection(.enabled)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 18).fill(Palette.raised))
+            }
+
+            if !notes.topics.isEmpty {
+                VStack(alignment: .leading, spacing: 18) {
+                    title(L("议题"))
+                    ForEach(Array(notes.topics.enumerated()), id: \.element.id) { i, topic in
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(NotesEngine.clock(topic.start))
+                                    .font(.system(size: 12).monospacedDigit()).foregroundStyle(Palette.tertiary)
+                                Text(topic.title).font(.system(size: 15, weight: .bold)).foregroundStyle(Palette.ink)
+                                if !topic.summary.isEmpty {
+                                    Text(topic.summary).font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                                        .lineSpacing(2).fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            if let fish = topic.fishbone {
+                                FishboneView(fishbone: fish, onJump: onJump)
+                            }
+                            if !topic.points.isEmpty {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(topic.points.enumerated()), id: \.offset) { i, p in
+                                        HStack(alignment: .top, spacing: 8) {
+                                            Text("•").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                                            Text(p).font(.system(size: 14)).foregroundStyle(Palette.ink)
+                                                .lineSpacing(2).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.leading, 16)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Palette.fill))
+                        .id(Self.topicID(topic))
+                    }
+                }
+                .padding(.horizontal, 18).padding(.top, 18)
+            }
+
+            if !notes.conclusions.isEmpty || !notes.todos.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    title(notes.todos.isEmpty ? L("结论") : L("结论和待办"))
+                    FramedList {
+                        items
+                    }
+                }
+                .padding(.horizontal, 18).padding(.vertical, 14)
+            }
+
+            if !notes.terms.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    title(L("人名和术语"))
+                    TermChips(terms: notes.terms, showHeard: true)
+                }
+                .padding(.horizontal, 18).padding(.vertical, 14)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private func title(_ text: String) -> some View {
+        Text(text).font(.system(size: 13, weight: .semibold)).foregroundStyle(Palette.secondary).padding(.bottom, 2)
+    }
+
+    /// A stable per-topic scroll anchor, shared with the TOC.
+    static func topicID(_ t: NoteTopic) -> String { "ai-topic-\(Int(t.start))-\(t.title)" }
+
+    @ViewBuilder
+    private var items: some View {
+        let all = notes.conclusions + notes.todos
+        ForEach(Array(all.enumerated()), id: \.offset) { i, item in
+            let todo = i >= notes.conclusions.count
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if todo {
+                    Image(systemName: "circle").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                } else {
+                    Circle().fill(Palette.ink.opacity(0.55)).frame(width: 5, height: 5)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] + 4 }
+                        .frame(width: 13)
+                }
+                Text(item.text + (item.owner.map { "（\($0)）" } ?? ""))
+                    .font(.system(size: 14)).lineSpacing(2)
+                    .foregroundStyle(item.support == 0 ? Palette.tertiary : Palette.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if item.support == 0 {
+                    Tag(L("依据较少"))
+                } else if let t = item.t {
+                    TimeLink(text: L("\(NotesEngine.clock(t)) · \(item.support) 句"), t: t, onJump: onJump)
+                } else {
+                    Tag(L("依据 \(item.support) 句"))
+                }
+            }
+            .padding(.horizontal, 16).padding(.vertical, 11)
+            Divider()
+        }
+    }
+}
+
+/// The drawer-style table of contents that overlays the AI view's visualization.
+///
+/// Opens from the left edge over the fishbone/table content, listing every topic and its points.
+/// Tapping an item jumps to that section in the AI view (and closes the drawer).
+struct AIToC: View {
+    let notes: MeetingNotes
+    @Binding var isOpen: Bool
+    var onJump: (String) -> Void = { _ in }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text(L("目录")).font(.system(size: 16, weight: .bold)).foregroundStyle(Palette.ink)
+                Spacer(minLength: 0)
+                Button { isOpen = false } label: {
+                    Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Palette.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 12)
+
+            Rectangle().fill(MainWindowView.hairline).frame(height: 1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if notes.topics.isEmpty {
+                        Text(L("没有可跳转的议题")).font(.system(size: 13)).foregroundStyle(Palette.tertiary)
+                            .padding(.vertical, 14).padding(.horizontal, 20)
+                    }
+                    ForEach(Array(notes.topics.enumerated()), id: \.element.id) { i, topic in
+                        Button {
+                            isOpen = false
+                            DispatchQueue.main.async { onJump(AIView.topicID(topic)) }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 8) {
+                                    Text(NotesEngine.clock(topic.start)).font(.system(size: 12).monospacedDigit())
+                                        .foregroundStyle(Palette.tertiary)
+                                    Text(topic.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.ink)
+                                    Spacer(minLength: 0)
+                                    Image(systemName: "arrow.turn.down.right").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                                }
+                                if !topic.points.isEmpty {
+                                    Text(topic.points.joined(separator: " · "))
+                                        .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                                        .lineLimit(2)
+                                        .lineSpacing(2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .padding(.vertical, 10).padding(.horizontal, 20)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        if i < notes.topics.count - 1 {
+                            Rectangle().fill(MainWindowView.hairline).frame(height: 1)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(width: 300)
+        .background(Color.white)
+        .shadow(color: .black.opacity(0.12), radius: 12, x: 4, y: 0)
+    }
+}
+
+/// Extension to expose a clock-friendly covered-time on MeetingNotes for the AI view.
+extension MeetingNotes {
+    var notesCoveredClock: Double? { covered > 0 ? Double(covered) : nil }
+}
+

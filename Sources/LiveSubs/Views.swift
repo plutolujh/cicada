@@ -1170,47 +1170,101 @@ struct SessionNotesView: View {
     var header: AnyView = AnyView(EmptyView())
     let onJump: (Double) -> Void
 
+    @State private var notesTab = "ai"
+    @State private var tocOpen = false
+
     private var live: Bool { session.id == model.store.liveID }
     private var notes: MeetingNotes? { live ? engine.notes : session.notes }
     private var generating: Bool { engine.generatingID == session.id }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 40) {
-                header
-                if let notes, !notes.isEmpty {
-                    NotesContentView(notes: notes, fresh: live ? engine.fresh : [], live: live, document: true,
-                                     endedAt: session.lines.last?.t, onJump: onJump)
-                } else if generating || (live && ai.hasKey && !session.lines.isEmpty) {
-                    NotesGeneratingView(heard: session.lines.count)
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(generating ? L("正在整理纪要…") : live ? L("纪要会在会议进行中自动生成") : L("这场会议还没有纪要"))
-                            .font(.system(size: 15, weight: .bold))
-                        Text(ai.hasKey ? L("使用 AI 服务将文字记录整理为总结、议题、结论和人名，约需半分钟。")
-                                         : L("前往 设置 › AI 服务 填入 Ling 的 API key 后即可生成。"))
-                            .font(.system(size: 13)).foregroundStyle(Palette.secondary)
-                        if !live {
-                            HStack(spacing: 8) {
-                                if ai.hasKey {
-                                    SoftButton(generating ? L("正在生成…") : L("生成纪要"), dark: true) {
-                                        engine.generate(for: session.id)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    header
+                    if let notes, !notes.isEmpty {
+                        HStack(spacing: 10) {
+                            if notesTab == "ai" && !notes.topics.isEmpty {
+                                Button { tocOpen = true } label: {
+                                    Image(systemName: "line.3.horizontal").font(.system(size: 13, weight: .medium))
+                                }
+                                .buttonStyle(.plain).foregroundStyle(Palette.secondary).help(L("目录"))
+                            }
+                            HStack(spacing: 0) {
+                                tabButton(L("AI 视图"), id: "ai")
+                                tabButton(L("文字总结"), id: "text")
+                            }
+                            .frame(maxWidth: .infinity)
+                            .background(RoundedRectangle(cornerRadius: 9).fill(Palette.fill))
+                        }
+                        .padding(.bottom, 4)
+
+                        if notesTab == "text" {
+                            NotesContentView(notes: notes, fresh: live ? engine.fresh : [], live: live, document: true,
+                                             endedAt: session.lines.last?.t, onJump: onJump)
+                        } else {
+                            AIView(notes: notes, live: live,
+                                   updating: live && engine.state == .updating,
+                                   summaryJustChanged: live && (engine.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false),
+                                   onJump: onJump)
+                        }
+                    } else if generating || (live && ai.hasKey && !session.lines.isEmpty) {
+                        NotesGeneratingView(heard: session.lines.count)
+                    } else {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(generating ? L("正在整理纪要…") : live ? L("纪要会在会议进行中自动生成") : L("这场会议还没有纪要"))
+                                .font(.system(size: 15, weight: .bold))
+                            Text(ai.hasKey ? L("使用 AI 服务将文字记录整理为总结、议题、结论和人名，约需半分钟。")
+                                             : L("前往 设置 › AI 服务 填入 Ling 的 API key 后即可生成。"))
+                                .font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                            if !live {
+                                HStack(spacing: 8) {
+                                    if ai.hasKey {
+                                        SoftButton(generating ? L("正在生成…") : L("生成纪要"), dark: true) {
+                                            engine.generate(for: session.id)
+                                        }
+                                        .disabled(generating)
+                                    } else {
+                                        SoftButton(L("去填 key"), dark: true) { model.openSettings(.ai) }
                                     }
-                                    .disabled(generating)
-                                } else {
-                                    SoftButton(L("去填 key"), dark: true) { model.openSettings(.ai) }
                                 }
                             }
                         }
+                        .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 18).fill(Palette.raised))
                     }
-                    .padding(20).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 18).fill(Palette.raised))
+                }
+                // A narrow measure and a tall top margin: the page reads as one quiet column.
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, 44).padding(.top, 52).padding(.bottom, 64)
+                .frame(maxWidth: .infinity)
+            }
+            .overlay(alignment: .topLeading) {
+                // The table of contents draws over the visualization and stays put.
+                if notesTab == "ai", tocOpen, let notes, !notes.topics.isEmpty {
+                    Color.black.opacity(0.2).ignoresSafeArea()
+                        .onTapGesture { tocOpen = false }
+                    AIToC(notes: notes, isOpen: $tocOpen) { id in
+                        withAnimation { proxy.scrollTo(id, anchor: .top) }
+                    }
+                    .transition(.move(edge: .leading))
                 }
             }
-            // A narrow measure and a tall top margin: the page reads as one quiet column.
-            .frame(maxWidth: 600, alignment: .leading)
-            .padding(.horizontal, 44).padding(.top, 52).padding(.bottom, 64)
-            .frame(maxWidth: .infinity)
         }
+    }
+
+    private func tabButton(_ title: String, id: String) -> some View {
+        Button { notesTab = id } label: {
+            Text(title).font(.system(size: 13, weight: notesTab == id ? .semibold : .regular))
+                .foregroundStyle(notesTab == id ? Palette.ink : Palette.secondary)
+                .frame(maxWidth: .infinity).frame(height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(notesTab == id ? Color.white : .clear)
+                .shadow(color: .black.opacity(notesTab == id ? 0.08 : 0), radius: 1.5, y: 1)
+        )
     }
 }
