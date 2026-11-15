@@ -401,6 +401,37 @@ enum TranscriptExport {
     }
 
     static func docx(_ s: Session) throws -> Data {
+        let doc = styledDocument(s)
+        return try doc.data(from: NSRange(location: 0, length: doc.length),
+                            documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
+    }
+
+    static func pdf(_ s: Session) -> Data {
+        let doc = styledDocument(s)
+        let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8) // A4
+        let inset = CGRect(x: 48, y: 48, width: page.width - 96, height: page.height - 96)
+        let data = NSMutableData()
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+              let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else { return Data() }
+        let framesetter = CTFramesetterCreateWithAttributedString(doc as CFAttributedString)
+        var current = 0
+        let total = doc.length
+        while current < total {
+            var media = page
+            ctx.beginPage(mediaBox: &media)
+            let path = CGPath(rect: inset, transform: nil)
+            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: current, length: 0), path, nil)
+            CTFrameDraw(frame, ctx)
+            let visible = CTFrameGetVisibleStringRange(frame).length
+            ctx.endPage()
+            if visible <= 0 { break }
+            current += visible
+        }
+        ctx.closePDF()
+        return data as Data
+    }
+
+    private static func styledDocument(_ s: Session) -> NSMutableAttributedString {
         let doc = NSMutableAttributedString()
         func add(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .black, after: CGFloat = 4) {
             let p = NSMutableParagraphStyle()
@@ -415,13 +446,14 @@ enum TranscriptExport {
         add(header(s), size: 10, color: .darkGray, after: 14)
         if let n = s.notes, !n.isEmpty {
             add(L("纪要"), size: 15, weight: .bold, after: 6)
-            add(n.summary, size: 11, after: 10)
+            if !n.summary.isEmpty { add(n.summary, size: 11, after: 10) }
             for t in n.topics {
                 add("\(clock(t.start))  \(t.title)", size: 12, weight: .semibold, after: 3)
                 if !t.summary.isEmpty { add(t.summary, size: 11, color: .darkGray, after: 3) }
                 for p in t.points { add("• \(p)", size: 11, after: 2) }
                 if let f = t.fishbone {
-                    add(f.question, size: 11, weight: .semibold, after: 2)
+                    let q = f.question.isEmpty ? L("为什么") : f.question
+                    add(q, size: 11, weight: .semibold, after: 2)
                     for b in f.branches { add("  – \(b.label)：\(b.detail)", size: 11, after: 2) }
                 }
                 add("", size: 6, after: 4)
@@ -429,10 +461,17 @@ enum TranscriptExport {
             if !n.conclusions.isEmpty {
                 add(L("结论"), size: 12, weight: .semibold, after: 3)
                 for c in n.conclusions { add("• \(c.text)", size: 11, after: 2) }
+                add("", size: 6, after: 4)
             }
             if !n.todos.isEmpty {
                 add(L("待办"), size: 12, weight: .semibold, after: 3)
                 for t in n.todos { add("☐ \(t.text)" + (t.owner.map { "（\($0)）" } ?? ""), size: 11, after: 2) }
+                add("", size: 6, after: 4)
+            }
+            if !n.terms.isEmpty {
+                add(L("人名和术语"), size: 12, weight: .semibold, after: 3)
+                for t in n.terms { add("• \(t.name) \(t.note)", size: 11, after: 2) }
+                add("", size: 6, after: 4)
             }
             add(L("文字记录"), size: 15, weight: .bold, after: 6)
         }
@@ -443,7 +482,6 @@ enum TranscriptExport {
             add(text, size: 11, after: 2)
             if let d = l.dst, d != text { add(d, size: 11, color: NSColor(calibratedWhite: 0.3, alpha: 1), after: 10) }
         }
-        return try doc.data(from: NSRange(location: 0, length: doc.length),
-                            documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
+        return doc
     }
 }

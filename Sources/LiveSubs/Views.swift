@@ -969,6 +969,7 @@ struct MainWindowView: View {
                 Button("导出 Markdown…") { model.export(s, kind: "md") }
                 Button("导出 Word…") { model.export(s, kind: "word") }
                 Button("导出字幕 SRT…") { model.export(s, kind: "srt") }
+                Button("导出 PDF…") { model.export(s, kind: "pdf") }
                 Divider()
                 Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
             } label: {

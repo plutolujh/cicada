@@ -1457,7 +1457,13 @@ final class AppModel: ObservableObject {
             return
         }
         let panel = NSSavePanel()
-        let ext = kind == "word" ? "docx" : kind == "srt" ? "srt" : "md"
+        let ext: String
+        switch kind {
+        case "word": ext = "docx"
+        case "srt": ext = "srt"
+        case "pdf": ext = "pdf"
+        default: ext = "md"
+        }
         panel.nameFieldStringValue = "\(session.displayTitle.replacingOccurrences(of: "/", with: "-")).\(ext)"
         panel.canCreateDirectories = true
         if let w = NSApp.keyWindow, !(w is NSPanel), w.isVisible {
@@ -1479,6 +1485,7 @@ final class AppModel: ObservableObject {
             switch kind {
             case "word": try TranscriptExport.docx(session).write(to: url)
             case "srt": try TranscriptExport.srt(session).write(to: url, atomically: true, encoding: .utf8)
+            case "pdf": try TranscriptExport.pdf(session).write(to: url)
             default: try TranscriptExport.markdown(session).write(to: url, atomically: true, encoding: .utf8)
             }
             return true
