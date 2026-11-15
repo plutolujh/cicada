@@ -293,14 +293,22 @@ final class AppModel: ObservableObject {
         applyToggleKey()
         refreshOutputs()
         let watch = Timer(timeInterval: 2, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.watchEnd() }
+            // Timer fires from the run loop, not on the main actor executor; hop to the executor
+            // before assumeIsolated, or swift_task_isMainExecutorImpl can crash on a null executor.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.watchEnd() }
+            }
         }
         endTimer = watch
         RunLoop.main.add(watch, forMode: .common)
         // The capture surface shows how loud the input is and how long it has run: both need
         // reading a few times a second while something is being heard.
         let captureTick = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tickCapture() }
+            // Timer fires from the run loop, not on the main actor executor; hop to the executor
+            // before assumeIsolated, or swift_task_isMainExecutorImpl can crash on a null executor.
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.tickCapture() }
+            }
         }
         captureTimer = captureTick
         RunLoop.main.add(captureTick, forMode: .common)
