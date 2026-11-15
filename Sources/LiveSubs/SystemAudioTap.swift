@@ -70,16 +70,32 @@ final class SystemAudioTap {
         return uid as String
     }
 
-    /// The device to listen to: the one the user hears. When the default output is a loopback
-    /// (BlackHole) that apps write into, the default system output is still the speakers, and
-    /// listening to the loopback would pick up the room: any app that records the microphone and
-    /// plays it into the loopback would come back as system audio. Falls back to the default
-    /// output when there is no separate system output.
+    /// The name of a device, for the log: which one the tap listens to.
+    private static func name(of device: AudioObjectID) -> String? {
+        var name: CFString = "" as CFString
+        var size = UInt32(MemoryLayout<CFString>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = withUnsafeMutablePointer(to: &name) { ptr in
+            AudioObjectGetPropertyData(device, &addr, 0, nil, &size, ptr)
+        }
+        if status != noErr { return nil }
+        return name as String
+    }
+
+    /// The device to listen to: the one apps write their sound to. That is where the sound
+    /// the Mac plays goes, whether or not the user hears it there.
+    ///
+    /// The default output is not always the speakers. With a loopback (BlackHole) as the default
+    /// output, every app writes into the loopback and the speakers stay silent, so listening to
+    /// the speakers would hear nothing at all. Listening to the loopback is safe: our own
+    /// process is excluded from the tap, so the translations we speak are not picked up again.
     static func listenDevice() -> AudioObjectID? {
-        let system = defaultSystemOutputDevice()
-        let output = device(kAudioHardwarePropertyDefaultOutputDevice)
-        if let system, system != output { return system }
-        return output ?? system
+        if let output = device(kAudioHardwarePropertyDefaultOutputDevice) { return output }
+        return defaultSystemOutputDevice()
     }
 
     private func fail(_ code: Int, _ message: String) -> NSError {
@@ -93,12 +109,13 @@ final class SystemAudioTap {
         guard let listen = Self.listenDevice(), let outputUID = Self.uid(of: listen) else {
             throw fail(-1, L("找不到默认输出设备"))
         }
+        debugLog("audio tap device: \(Self.name(of: listen) ?? outputUID)")
 
-        // Only the audio that goes to the device the user hears, not a mix of everything the
+        // Only the audio that goes to the device apps write to, not a mix of everything the
         // system plays. A global tap also picks up whatever apps write into a loopback device
         // (BlackHole), and an app that records the room and plays it there would put the sound
-        // of the room into the system audio. Excluding our own process keeps the app's own spoken
-        // translations from coming back as subtitles.
+        // of the room into the system audio. Excluding our own process keeps the app's own
+        // spoken translations from coming back as subtitles.
         let desc = CATapDescription(excludingProcesses: Self.ownProcessObject().map { [$0] } ?? [],
                                     deviceUID: outputUID,
                                     stream: 0)
