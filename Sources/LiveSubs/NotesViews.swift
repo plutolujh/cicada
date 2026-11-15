@@ -399,6 +399,8 @@ struct TimeLink: View {
 struct FishboneView: View {
     let fishbone: Fishbone
     var onJump: (Double) -> Void = { _ in }
+    /// The hint is for the screen: a file has no lines to jump back to.
+    var showsHint = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -422,7 +424,9 @@ struct FishboneView: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("点击分支跳回原话").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+            if showsHint {
+                Text("点击分支跳回原话").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+            }
         }
         .padding(12)
         .background(RoundedRectangle(cornerRadius: 16).stroke(Palette.line, lineWidth: 1))

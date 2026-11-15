@@ -417,7 +417,7 @@ enum TranscriptExport {
             if !t.points.isEmpty { out += "\n" }
             if let f = t.fishbone {
                 out += "**\(f.question.isEmpty ? L("为什么") : f.question)**\n\n"
-                for b in f.branches { out += "- \(b.label)：\(b.detail)\n" }
+                for b in f.branches { out += "- **\(b.label)**\(b.detail.isEmpty ? "" : "：\(b.detail)")\n" }
                 out += "\n"
             }
         }
@@ -432,7 +432,7 @@ enum TranscriptExport {
             out += "\n"
         }
         if !n.terms.isEmpty {
-            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\n" }.joined() + "\n"
+            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\(heard($0))\n" }.joined() + "\n"
         }
         return out
     }
@@ -455,7 +455,7 @@ enum TranscriptExport {
             + n.todos.map { "- [ ] \($0.text)" + ($0.owner.map { "（\($0)）" } ?? "") + "\n" }.joined() + "\n"
         }
         if !n.terms.isEmpty {
-            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\n" }.joined() + "\n"
+            out += "### \(L("人名和术语"))\n\n" + n.terms.map { "- **\($0.name)** \($0.note)\(heard($0))\n" }.joined() + "\n"
         }
         return out
     }
@@ -466,6 +466,12 @@ enum TranscriptExport {
         if item.support > 0 { parts.append(L("依据 \(item.support) 句")) }
         if let t = item.t { parts.append(clock(t)) }
         return parts.isEmpty ? "" : "（" + parts.joined(separator: " · ") + "）"
+    }
+
+    /// " · 原识别 知了": the ways the name was heard, as the chips on screen show them.
+    private static func heard(_ term: NoteTerm) -> String {
+        guard !term.heard.isEmpty else { return "" }
+        return " · " + L("原识别 \(term.heard.prefix(2).joined(separator: "、"))")
     }
 
     static func markdown(_ s: Session, options: ExportOptions = ExportOptions()) -> String {
@@ -506,38 +512,57 @@ enum TranscriptExport {
         return out
     }
 
-    static func docx(_ s: Session, options: ExportOptions = ExportOptions()) throws -> Data {
-        let doc = styledDocument(s, options: options)
+    static func docx(_ s: Session, options: ExportOptions = ExportOptions(), images: [String: NSImage] = [:]) throws -> Data {
+        let doc = styledDocument(s, options: options, images: images)
         return try doc.data(from: NSRange(location: 0, length: doc.length),
                             documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML])
     }
 
-    static func pdf(_ s: Session, options: ExportOptions = ExportOptions()) -> Data {
-        let doc = styledDocument(s, options: options)
+    static func pdf(_ s: Session, options: ExportOptions = ExportOptions(), images: [String: NSImage] = [:]) -> Data {
+        let doc = styledDocument(s, options: options, images: images)
         let page = CGRect(x: 0, y: 0, width: 595.2, height: 841.8) // A4
         let inset = CGRect(x: 48, y: 48, width: page.width - 96, height: page.height - 96)
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
               let ctx = CGContext(consumer: consumer, mediaBox: nil, nil) else { return Data() }
-        let framesetter = CTFramesetterCreateWithAttributedString(doc as CFAttributedString)
+        // TextKit lays out the styled document (text + the fishbone pictures as attachments)
+        // and paginates it onto A4 pages; Core Text's framesetter would drop the pictures.
+        let storage = NSTextStorage(attributedString: doc)
+        let container = NSTextContainer(size: CGSize(width: inset.width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
         var current = 0
         let total = doc.length
         while current < total {
             var media = page
             ctx.beginPage(mediaBox: &media)
-            let path = CGPath(rect: inset, transform: nil)
-            let frame = CTFramesetterCreateFrame(framesetter, CFRange(location: current, length: 0), path, nil)
-            CTFrameDraw(frame, ctx)
-            let visible = CTFrameGetVisibleStringRange(frame).length
+            // TextKit reports line-fragment rects from the top-left of the inset area with y
+            // pointing down; map them onto the page (PDF origin is bottom-left). NSGraphicsContext
+            // is needed so that NSTextAttachment images (the fishbone) actually draw.
+            ctx.translateBy(x: inset.origin.x, y: page.height - inset.origin.y)
+            ctx.scaleBy(x: 1, y: -1)
+            let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: true)
+            NSGraphicsContext.current = nsCtx
+            var drewAny = false
+            manager.enumerateLineFragments(forGlyphRange: NSRange(location: current, length: total - current)) { rect, _, _, glyphRange, stop in
+                let bottom = rect.origin.y + rect.size.height
+                guard bottom <= inset.height else { stop.pointee = true; return }
+                manager.drawBackground(forGlyphRange: glyphRange, at: rect.origin)
+                manager.drawGlyphs(forGlyphRange: glyphRange, at: rect.origin)
+                current = glyphRange.upperBound
+                drewAny = true
+            }
+            NSGraphicsContext.current = nil
             ctx.endPage()
-            if visible <= 0 { break }
-            current += visible
+            if !drewAny { break } // a fragment taller than the page: stop rather than loop forever
         }
         ctx.closePDF()
         return data as Data
     }
 
-    static func styledDocument(_ s: Session, options: ExportOptions = ExportOptions()) -> NSMutableAttributedString {
+    static func styledDocument(_ s: Session, options: ExportOptions = ExportOptions(), images: [String: NSImage] = [:]) -> NSMutableAttributedString {
         let doc = NSMutableAttributedString()
         func add(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular, color: NSColor = .black, after: CGFloat = 4) {
             let p = NSMutableParagraphStyle()
@@ -547,6 +572,18 @@ enum TranscriptExport {
                 .foregroundColor: color,
                 .paragraphStyle: p,
             ]))
+        }
+        /// A picture in the text: the fishbone, drawn the way the meeting record draws it.
+        func addPicture(_ image: NSImage, maxWidth: CGFloat = 460) {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            attachment.attachmentCell = NSTextAttachmentCell(imageCell: image)
+            let w = min(maxWidth, image.size.width)
+            attachment.bounds = CGRect(x: 0, y: 0, width: w, height: image.size.height * (w / image.size.width))
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacing = 10
+            doc.append(NSAttributedString(attachment: attachment))
+            doc.append(NSAttributedString(string: "\n", attributes: [.paragraphStyle: p]))
         }
         /// The notes in one of the two readings: the visualization (the fishbone and the
         /// grounds the conclusions rest on) or the written summary.
@@ -559,7 +596,12 @@ enum TranscriptExport {
                 if aiView, let f = t.fishbone {
                     let q = f.question.isEmpty ? L("为什么") : f.question
                     add(q, size: 11, weight: .semibold, after: 2)
-                    for b in f.branches { add("  – \(b.label)：\(b.detail)", size: 11, after: 2) }
+                    // The diagram itself when there is one; the branches as text otherwise.
+                    if let image = images[t.id] {
+                        addPicture(image)
+                    } else {
+                        for b in f.branches { add("  – \(b.label)：\(b.detail)", size: 11, after: 2) }
+                    }
                 }
                 add("", size: 6, after: 4)
             }
@@ -577,7 +619,7 @@ enum TranscriptExport {
             }
             if !n.terms.isEmpty {
                 add(L("人名和术语"), size: 12, weight: .semibold, after: 3)
-                for t in n.terms { add("• \(t.name) \(t.note)", size: 11, after: 2) }
+                for t in n.terms { add("• \(t.name) \(t.note)\(heard(t))", size: 11, after: 2) }
                 add("", size: 6, after: 4)
             }
         }

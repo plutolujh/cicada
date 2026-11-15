@@ -1524,10 +1524,13 @@ final class AppModel: ObservableObject {
     @discardableResult
     func writeExport(_ session: Session, kind: String, options: ExportOptions = ExportOptions(), to url: URL) -> Bool {
         do {
+            // The fishbones are drawn the way the meeting record draws them, so the file has
+            // the same diagram the reader saw.
+            let images = options.aiView ? FishboneImage.images(session.notes ?? MeetingNotes()) : [:]
             switch kind {
-            case "word": try TranscriptExport.docx(session, options: options).write(to: url)
+            case "word": try TranscriptExport.docx(session, options: options, images: images).write(to: url)
             case "srt": try TranscriptExport.srt(session).write(to: url, atomically: true, encoding: .utf8)
-            case "pdf": try TranscriptExport.pdf(session, options: options).write(to: url)
+            case "pdf": try TranscriptExport.pdf(session, options: options, images: images).write(to: url)
             default: try TranscriptExport.markdown(session, options: options).write(to: url, atomically: true, encoding: .utf8)
             }
             debugLog("export wrote \(url.path)")
