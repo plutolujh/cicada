@@ -641,15 +641,21 @@ struct MainWindowView: View {
         }
         .background(Color.white.ignoresSafeArea())
         .background(Button("") { searchFocused = true }.keyboardShortcut("f").opacity(0))
-        .onChange(of: model.mainShow) { _, show in
-            guard let parts = show?.split(separator: ",").map(String.init), let id = parts.first else { return }
-            selection = id
-            tab = parts.count > 1 ? parts[1] : "notes"
-            if parts.count > 2 { view = parts[2] }
-            // A meeting that is being shown comes up on the meeting side, not on the
-            // recording side: the recording is over, and what it became is what is read.
-            if surface == "capture" { surface = "meetings" }
-        }
+        .onAppear { apply(model.mainShow) }
+        .onChange(of: model.mainShow) { _, show in apply(show) }
+    }
+
+    /// Shows the meeting that was asked for. The request can come before the window exists
+    /// (the notes window asks for it while the records window is still closed), so it is
+    /// applied on the first sight of the window too.
+    private func apply(_ show: String?) {
+        guard let parts = show?.split(separator: ",").map(String.init), let id = parts.first else { return }
+        selection = id
+        tab = parts.count > 1 ? parts[1] : "notes"
+        if parts.count > 2 { view = parts[2] }
+        // A meeting that is being shown comes up on the meeting side, not on the
+        // recording side: the recording is over, and what it became is what is read.
+        if surface == "capture" { surface = "meetings" }
     }
 
     /// 会议 / 录音: the two things the records window does.
@@ -715,38 +721,46 @@ struct MainWindowView: View {
             .padding(.horizontal, 12).frame(height: 30)
             .padding(.bottom, 6)
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    // The newest day shows; older ones fold under one row until asked for (or searched).
-                    let all = groups
-                    let folded = query.isEmpty && !showOlder && all.count > 1
-                    ForEach(Array((folded ? Array(all.prefix(1)) : all).enumerated()), id: \.element.title) { i, g in
-                        Text(g.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
-                            .padding(.horizontal, 12).padding(.top, i == 0 ? 0 : 18).padding(.bottom, 6)
-                        ForEach(g.sessions) { sessionRow($0) }
-                    }
-                    if query.isEmpty && all.count > 1 {
-                        Button { withAnimation(.easeOut(duration: 0.2)) { showOlder.toggle() } } label: {
-                            HStack {
-                                Text(showOlder ? L("收起更早的会议") : L("更早的会议"))
-                                Spacer()
-                                Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
-                                    .rotationEffect(.degrees(showOlder ? -90 : 0))
-                            }
-                            .font(.system(size: 13)).foregroundStyle(Palette.secondary)
-                            .padding(.horizontal, 12).padding(.vertical, 9)
-                            .contentShape(Rectangle())
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        // The newest day shows; older ones fold under one row until asked for (or searched).
+                        let all = groups
+                        let folded = query.isEmpty && !showOlder && all.count > 1
+                        ForEach(Array((folded ? Array(all.prefix(1)) : all).enumerated()), id: \.element.title) { i, g in
+                            Text(g.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
+                                .padding(.horizontal, 12).padding(.top, i == 0 ? 0 : 18).padding(.bottom, 6)
+                            ForEach(g.sessions) { sessionRow($0) }
                         }
-                        .buttonStyle(.plain)
-                        .padding(.top, 12)
-                    }
-                    if filtered.isEmpty {
-                        Text("没有找到“\(query)”").font(.system(size: 12)).foregroundStyle(Palette.secondary)
-                            .padding(.horizontal, 10)
+                        if query.isEmpty && all.count > 1 {
+                            Button { withAnimation(.easeOut(duration: 0.2)) { showOlder.toggle() } } label: {
+                                HStack {
+                                    Text(showOlder ? L("收起更早的会议") : L("更早的会议"))
+                                    Spacer()
+                                    Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
+                                        .rotationEffect(.degrees(showOlder ? -90 : 0))
+                                }
+                                .font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                                .padding(.horizontal, 12).padding(.vertical, 9)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.top, 12)
+                        }
+                        if filtered.isEmpty {
+                            Text("没有找到“\(query)”").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                                .padding(.horizontal, 10)
+                        }
                     }
                 }
+                .scrollIndicators(.never)
+                .onChange(of: selection) { _, id in
+                    // The meeting asked for from elsewhere comes into view, not only into the
+                    // detail pane: the list is where the user sees where they are.
+                    guard let id else { return }
+                    DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) } }
+                }
             }
-            .scrollIndicators(.never)
         }
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
         .onChange(of: selection) { _, id in

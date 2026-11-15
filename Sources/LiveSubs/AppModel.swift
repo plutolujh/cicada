@@ -126,11 +126,10 @@ final class AppModel: ObservableObject {
     private var speakerSetting: AnyCancellable?
     var openOnboarding: (() -> Void)?
 
+    /// Opens the records window, never minimising it: everything that names a meeting means
+    /// "show me that one".
     var openMainWindow: (() -> Void)?
     var openSettingsWindow: (() -> Void)?
-    /// Opens the main window without the toggle-to-minimise behaviour: used when a recording ends
-    /// and the user clicks "查看会议记录", so the record opens, never toggles away.
-    var openMainWindowAlways: (() -> Void)?
     var showPanel: (() -> Void)?
     /// Opens the menu bar panel, leaving it open if it already is: the main window's button
     /// means "show me the listener", not "flip the listener".
@@ -676,7 +675,7 @@ final class AppModel: ObservableObject {
         mainShow = "\(id),notes"
         // A recording just ended: the record is what the user asked for, so it is opened, never
         // toggled away. The pill's double click is the one that toggles.
-        openMainWindowAlways?()
+        openMainWindow?()
     }
 
     /// A settled sentence goes into the meeting record, so the recording can be read, exported
@@ -2165,8 +2164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.install()
         setupStatusItem()
         model.openMainWindow = { [weak self] in self?.showMainWindow() }
-        model.toggleMainWindow = { [weak self] in self?.showMainWindow() }
-        model.openMainWindowAlways = { [weak self] in self?.openMainWindowAlways() }
+        model.toggleMainWindow = { [weak self] in self?.toggleMainWindow() }
         model.openSettingsWindow = { [weak self] in self?.showSettingsWindow() }
         model.showPanel = { [weak self] in self?.togglePopover() }
         model.openPanel = { [weak self] in self?.openPopover() }
@@ -2328,13 +2326,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    /// Brings the records window to the front. It never minimises: everything that names a
+    /// meeting — the notes window, the panel, the menu — means "show me that one".
     func showMainWindow() {
-        if let w = mainWindow, w.isVisible, w.isKeyWindow {
-            // A double click on the pill when the main window is already in front minimises it:
-            // the pill is the way back to the records, so it is a toggle, not just an opener.
-            w.miniaturize(nil)
-            return
-        }
         popover.performClose(nil)
         ensureMainWindow()
         NSApp.setActivationPolicy(.regular)
@@ -2342,15 +2336,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate()
     }
 
-    /// Opens the main window without the toggle-to-minimise behaviour. Used when a recording
-    /// ends and the user clicks "查看会议记录": the record is what they asked for, so it is
-    /// opened, never toggled away.
-    func openMainWindowAlways() {
-        popover.performClose(nil)
-        ensureMainWindow()
-        NSApp.setActivationPolicy(.regular)
-        mainWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate()
+    /// The pill's way back to the records: a double click opens the window, and a double click
+    /// on the open window puts it away again.
+    func toggleMainWindow() {
+        if let w = mainWindow, w.isVisible, w.isKeyWindow {
+            w.miniaturize(nil)
+            return
+        }
+        showMainWindow()
     }
 
     func showSettingsWindow() {
