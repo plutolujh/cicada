@@ -24,6 +24,7 @@
   - 渲染（不需要录屏权限）：`panelRender:<png>`（菜单栏面板，离屏画）、`windowsRender:<目录>`、`settingsRender:<栏目>=<png>`、`notesRender:<png>`、`mainShow:<id>[,transcript]`、`mainRender:<png>`、`speakTestRender:<png>`、`recordRender:<png>`（实时识别页）、`pillRender:<png>`（主窗口顶栏的胶囊）
   - 暂停：`listenPause` / `listenResume`（听系统声音）、`recordPause` / `recordResume`（录麦克风）、`listenState` / `captureState`（当前状态和计时）
   - 系统声音：`listenStats` 把识别链路写进日志（`results` 识别出的段数、`finals` 定稿的段数、`analyzerBuffers`/`analyzerSeconds` 送进识别器的音频、`convertFailures` 转换失败、`level` 输入的音量）。数字不动说明音频没进来，往上走但 `finals` 不动说明识别器没认出来
+  - 切换来源：`switchConfirm:system` / `switchConfirm:mic` 把切换前那句问话弹出来，看它怎么写（确认后按“取消”即可）
   - 浮动胶囊：`floatingPill`（状态、位置和按钮的位置）、`floatingPill:on` / `floatingPill:off`、`floatingPill:move:x,y`（放到指定位置，x/y 是左下角坐标）
   - AI：`aiKeyFile:<路径>`（从 0600 文件读 key，不经过日志；测完就删掉文件）、`aiCheck`、`aiRemove`、`aiHide:<on|off>`（只在内存里当作没有 key，文件不动；用于截图）、`aiState`、`lingSimulate:<429|hijack|timeout|off>`
   - 声音：`voice:<语言>[=<id>]`、`voicePreview:<语言>=<id>`、`voiceCloneFile:<wav>`、`voicePicker:<on|off>`

@@ -185,23 +185,32 @@ struct CaptureView: View {
         }
     }
 
-    /// Picks the source. The one that was running is stopped first: the microphone and the
-    /// system audio cannot both be listened to at once, and the words of one would be mixed
-    /// with the words of the other.
+    /// Picks the source. When the other one is running the user is asked first: the microphone
+    /// and the system audio cannot both be listened to at once, and the words of one would be
+    /// mixed with the words of the other — so the running one is stopped, and what it has
+    /// written down so far belongs to it.
     private func switchSource(to s: CaptureSource) {
+        // The source that is running, whichever one it is: the recording can be started from
+        // the menu bar too, not only from here.
+        let active: CaptureSource? = running(.mic) ? .mic : (running(.system) ? .system : nil)
+        if let active, active != s {
+            guard model.confirmSwitch(from: active, to: s) else { return }
+            stopRunning(active, confirmed: true)
+        }
         guard s != picked else { return }
-        if running(picked) { stopRunning(picked) }
         picked = s
         feed.source = s
         feed.reset()
     }
 
-    private func stopRunning(_ s: CaptureSource) {
+    /// Stops the source that is running. `confirmed` says the user has already been asked, so
+    /// the meeting does not ask a second time.
+    private func stopRunning(_ s: CaptureSource, confirmed: Bool = false) {
         switch s {
-        case .system: model.requestStop()
+        case .system: confirmed ? model.stop() : model.requestStop()
         case .mic:
             engine.stop()
-            model.endRecording()
+            model.endRecording(showCard: !confirmed)
         }
     }
 

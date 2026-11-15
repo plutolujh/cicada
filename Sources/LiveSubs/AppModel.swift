@@ -614,7 +614,10 @@ final class AppModel: ObservableObject {
     }
 
     /// Ends the recording and keeps it in the meeting list.
-    func endRecording() {
+    /// Ends the recording and saves it. `showCard` says whether the passage to the meeting
+    /// record is shown: when the recording was stopped to switch to the other source, the user
+    /// has something else in mind and the card would only be in the way.
+    func endRecording(showCard: Bool = true) {
         recorder.stop()
         recordWatch = nil
         setEnding(nil)
@@ -640,7 +643,7 @@ final class AppModel: ObservableObject {
         refresh()
         // What was saved is shown for a moment, so the recording does not simply vanish into
         // the meeting list.
-        showSaving(id)
+        if showCard { showSaving(id) }
     }
 
     /// The passage from a finished recording to the meeting record: what went in, and where it
@@ -771,6 +774,24 @@ final class AppModel: ObservableObject {
         end.keyEquivalent = ""
         keep.keyEquivalent = "\r"
         if alert.runModal() == .alertFirstButtonReturn { stop() }
+    }
+
+    /// Asks before the source is switched while the other one is running. The microphone and the
+    /// system audio cannot both be listened to, so the running one has to stop — and stopping a
+    /// recording is not something the app should do on its own.
+    func confirmSwitch(from old: CaptureSource, to new: CaptureSource) -> Bool {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = new == .mic ? L("切换到麦克风？") : L("切换到系统声音？")
+        alert.informativeText = old == .mic
+            ? L("麦克风正在录音，切换会结束这场录音并保存到会议记录。")
+            : L("系统声音正在收听，切换会结束这场收听。")
+        // The switch is the action, cancelling is the safe answer: Return does nothing.
+        let go = alert.addButton(withTitle: L("切换"))
+        let cancel = alert.addButton(withTitle: L("取消"))
+        go.keyEquivalent = ""
+        cancel.keyEquivalent = "\r"
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     //// Puts the listening on hold: the tap stays open (the meter still moves) but nothing said
@@ -1851,6 +1872,12 @@ final class AppModel: ObservableObject {
                 + "feed=\(capture.lines.count) live=\(capture.live.prefix(30)) elapsed=\(Int(capture.elapsed)) "
                 + "level=\(String(format: "%.3f", capture.level)) systemRunning=\(listen.isRunning) "
                 + "micState=\(recorder.state) micLines=\(recorder.lines.count)")
+        case "switchConfirm":
+            // switchConfirm:<source>: the question the source switch asks, to see how it reads.
+            let to: CaptureSource = arg == "mic" ? .mic : .system
+            let from: CaptureSource = to == .mic ? .system : .mic
+            let yes = confirmSwitch(from: from, to: to)
+            debugLog("switch: confirm \(from.rawValue)→\(to.rawValue) = \(yes)")
         case "listenPause":
             pauseListening()
             debugLog("listen: paused paused=\(listen.isPaused) elapsed=\(Int(listenElapsed))")
