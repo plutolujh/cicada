@@ -136,6 +136,11 @@
 "已记录 %@ · %lld 句。结束后停止收听，并整理一份完整版纪要。" = "Recorded %@ · %lld lines. Ending stops listening and writes the full notes.";
 "结束会议" = "End Meeting";
 "继续记录" = "Keep Recording";
+"切换到麦克风？" = "Switch to the microphone?";
+"切换到系统声音？" = "Switch to system sound?";
+"麦克风正在录音，切换会结束这场录音并保存到会议记录。" = "The microphone is recording. Switching ends the recording and saves it to the meeting record.";
+"系统声音正在收听，切换会结束这场收听。" = "System audio is being listened to. Switching ends the listening.";
+"切换" = "Switch";
 "界面语言已改为 %@" = "Interface language set to %@";
 "重启应用后生效。现在重启吗？" = "It takes effect after a restart. Restart now?";
 "现在重启" = "Restart now";
@@ -144,11 +149,11 @@
 "与另一个快捷键冲突" = "Conflicts with the other shortcut";
 "%@ 是系统快捷键，换一个吧" = "%@ is a system shortcut; choose another";
 "%@ 已被其他应用占用，换一个吧" = "%@ is taken by another app; choose another";
+"%lld 秒后暂停" = "Pausing in %lld s";
 "%lld 秒后结束" = "ending in %lld s";
 "%@ 已挂断" = "%@ hung up";
 "已经 %lld 分钟没人说话" = "No one has spoken for %lld min";
 "%lld 秒后结束会议并整理纪要" = "Ending in %lld s and writing up the notes";
-"%lld 秒后暂停" = "Pausing in %lld s";
 "欢迎使用%@" = "Welcome to %@";
 "设置" = "Settings";
 "正在记录会议" = "A meeting is being recorded";
@@ -162,7 +167,8 @@
 "录房间里的声音：说话的人。" = "The microphone: the people in the room.";
 
 /* CaptureViews */
-"新录音" = "New recording";
+"完成" = "Done";
+"修改标题" = "Rename";
 "原文、译文或双语" = "Original, translation, or both";
 "导出录音" = "Export the recording";
 "自动识别" = "Auto-detect";
@@ -178,6 +184,7 @@
 "暂停" = "Pause";
 "恢复" = "Resume";
 "停止" = "Stop";
+"导出 PDF" = "Export PDF";
 "导出 Markdown" = "Export Markdown";
 "导出 Word" = "Export Word";
 "导出字幕 (SRT)" = "Export subtitles (SRT)";
@@ -191,13 +198,34 @@
 "合并或拆分" = "Merge or split";
 "和下一句合并" = "Merge with the next one";
 "从这里分成两句" = "Split into two here";
+"查看原文" = "View original";
+"撤销纠错" = "Undo correction";
+"重新纠错" = "Re-correct";
+"已润色" = "Polished";
 "改正这句话" = "Correct this sentence";
 "保存" = "Save";
-"正在更新…" = "Updating…";
-"重新总结" = "Summarize again";
 "纪要由 AI 服务整理，需要在设置里填好服务 key。" = "The notes come from the AI service; add its key in Settings.";
 "说几句之后，这里会边听边写。" = "Say a few words and it writes itself here as you talk.";
 "正在整理…" = "Putting it together…";
+"正在更新…" = "Updating…";
+"目录" = "Contents";
+"重新总结" = "Summarize again";
+"AI 视图" = "AI View";
+"文字总结" = "Text Summary";
+"总结" = "Summary";
+"刚更新" = "Just updated";
+"完整版" = "Full version";
+"速记版 · 到 %@" = "Draft · up to %@";
+"速记版" = "Draft";
+"议题" = "Topics";
+"结论" = "Conclusions";
+"结论和待办" = "Conclusions and to-dos";
+"人名和术语" = "Names and terms";
+"依据较少" = "Little evidence";
+"依据 %lld 句" = "Evidence: %lld";
+"%@ · %lld 句" = "%@ · %lld lines";
+"没有可跳转的议题" = "Nothing to jump to";
+"正在润色…" = "Polishing…";
 
 /* CustomProvider */
 "填入服务商的接口地址和模型名，再填它的 API key。" = "Enter the service's endpoint and model, then its API key.";
@@ -318,6 +346,7 @@
 "录音已暂停" = "Recording Paused";
 "知了" = "Cicada";
 "会议已自动结束" = "Meeting ended by itself";
+"双击打开/最小化会议记录" = "Double-click to open/minimize meeting record";
 "暂停收听" = "Pause Listening";
 "结束" = "End";
 "恢复收听" = "Resume Listening";
@@ -351,18 +380,6 @@
 "在 MiniMax 开放平台创建 API Key，复制那串密钥。" = "Create an API key on the MiniMax platform and copy it.";
 
 /* NotesViews */
-"总结" = "Summary";
-"刚更新" = "Just updated";
-"完整版" = "Full version";
-"速记版 · 到 %@" = "Draft · up to %@";
-"速记版" = "Draft";
-"议题" = "Topics";
-"结论" = "Conclusions";
-"结论和待办" = "Conclusions and to-dos";
-"人名和术语" = "Names and terms";
-"依据较少" = "Little evidence";
-"依据 %lld 句" = "Evidence: %lld";
-"%@ · %lld 句" = "%@ · %lld lines";
 "正在讲" = "Now";
 "新" = "New";
 "看原话" = "See what was said";
@@ -476,7 +493,6 @@
 "打开后自动继续" = "Continues once it's on";
 "上一步" = "Back";
 "先不用了" = "Not now";
-"完成" = "Done";
 "开始使用" = "Get Started";
 "继续" = "Continue";
 "让知了听到电脑里的声音" = "Let Cicada hear your Mac";
@@ -627,7 +643,6 @@
 "系统麦克风被换成了 %@" = "System mic changed to %@";
 "换回" = "Switch back";
 "系统麦克风还没换成 %@" = "System mic isn't %@ yet";
-"切换" = "Switch";
 "%@还在用 %@" = "%@ still uses %@";
 "%@没选虚拟麦克风" = "%@ isn't on the virtual mic";
 "怎么改" = "How to fix";
@@ -662,6 +677,8 @@
 "恢复默认" = "Reset";
 "保存会议录音" = "Save meeting audio";
 "只存在这台 Mac 上" = "Stored only on this Mac";
+"识别后自动纠错" = "Auto-correct after recognition";
+"录音结束后在后台润色同音字/错字/标点；原文保留可对照" = "Polish homophones, typos, and punctuation in the background after recording; the original is kept for comparison";
 "记录文件夹" = "Records folder";
 "打开" = "Open";
 "会议应用挂断后结束" = "End when the meeting app hangs up";
@@ -670,7 +687,6 @@
 "按识别出的话算，背景音乐不算" = "Counts recognized words, not background music";
 "多久算没人说话" = "Silent for";
 "提醒后结束" = "Ask, then end";
-"暂停" = "Pause";
 "直接结束" = "End";
 "一直记录" = "Keep going";
 "实验功能" = "Experimental";
@@ -798,8 +814,8 @@
 "无法创建音频单元（%d）" = "Can't create the audio unit (%d)";
 "找不到 HAL 音频组件" = "Can't find the HAL audio component";
 "无法创建音频聚合设备（%d）" = "Can't create the aggregate audio device (%d)";
-"找不到默认输出设备" = "Can't find the default output device";
 "无法创建系统音频 Tap（%d）" = "Can't create the system audio tap (%d)";
+"找不到默认输出设备" = "Can't find the default output device";
 
 /* UpdateViews */
 "下载进度" = "Download progress";
@@ -902,6 +918,7 @@
 "导出 Markdown…" = "Export Markdown…";
 "导出 Word…" = "Export Word…";
 "导出字幕 SRT…" = "Export SRT Subtitles…";
+"导出 PDF…" = "Export PDF…";
 "导出…" = "Export…";
 "完整版纪要" = "Full notes";
 "速记版纪要" = "Draft notes";
