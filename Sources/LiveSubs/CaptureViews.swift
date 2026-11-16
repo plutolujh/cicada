@@ -819,7 +819,8 @@ struct CaptureView: View {
                                              updating: notes.state == .updating,
                                              summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
                                              coveredUntil: coveredUntil,
-                                             endedAt: endedAt)
+                                             endedAt: endedAt,
+                                             showsDiagram: false)
                             .padding(.horizontal, 20).padding(.vertical, 16)
                         } else {
                             AIView(notes: notes.notes, live: recording,

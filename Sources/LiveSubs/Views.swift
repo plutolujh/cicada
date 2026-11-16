@@ -1382,7 +1382,7 @@ struct SessionNotesView: View {
 
                         if notesTab == "text" {
                             NotesContentView(notes: notes, fresh: live ? engine.fresh : [], live: live, document: true,
-                                             endedAt: session.lines.last?.t, onJump: onJump)
+                                             endedAt: session.lines.last?.t, showsDiagram: false, onJump: onJump)
                         } else {
                             AIView(notes: notes, live: live,
                                    updating: live && engine.state == .updating,
