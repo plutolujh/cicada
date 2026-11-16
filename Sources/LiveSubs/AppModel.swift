@@ -366,7 +366,6 @@ final class AppModel: ObservableObject {
     func launch() async {
         await listen.refreshInstalledLocales()
         refresh()
-        start()
         if settings.speakEnabled { enableSpeaking(true) }
     }
 
