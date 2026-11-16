@@ -621,15 +621,12 @@ struct MainWindowView: View {
         // pill lives in the window's toolbar (`MainToolbar`). With no meetings yet, only the
         // welcome shows: an empty list is noise.
         HStack(spacing: 0) {
-            let showSidebar = surface != "capture"
-            if showSidebar {
-                if sidebarCollapsed {
-                    sidebarToggle
-                } else {
-                    sidebar
-                        .frame(width: 232)
-                        .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
-                }
+            if sidebarCollapsed {
+                sidebarToggle
+            } else {
+                sidebar
+                    .frame(width: 232)
+                    .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
             }
             VStack(spacing: 0) {
                 surfaceSwitch
