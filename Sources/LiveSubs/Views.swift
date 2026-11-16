@@ -733,21 +733,18 @@ struct MainWindowView: View {
 
     /// A thin bar at the edge when the sidebar is collapsed; clicking it expands the sidebar.
     private var sidebarToggle: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            Button { sidebarCollapsed = false } label: {
-                Image(systemName: "sidebar.left")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Palette.secondary)
-                    .frame(width: 16, height: 40)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .background(Color.white)
-            .help(L("展开会议列表"))
-            Spacer()
+        Button { sidebarCollapsed = false } label: {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Palette.secondary)
+                .padding(4)
+                .contentShape(Rectangle())
         }
-        .frame(width: 16)
+        .buttonStyle(.plain)
+        .background(Color.white)
+        .help(L("展开会议列表"))
+        .frame(width: 16, height: 30, alignment: .top)
+        .padding(.top, 0)
     }
 
     // MARK: Sidebar
