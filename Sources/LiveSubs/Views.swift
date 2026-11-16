@@ -670,12 +670,11 @@ struct MainWindowView: View {
         if surface == "capture" { surface = "meetings" }
     }
 
-    /// 会议 / 录音 / 回收站: the three things the records window does.
+    /// 会议 / 录音: the two primary surfaces. Trash lives in the sidebar as a bottom row.
     private var surfaceSwitch: some View {
         HStack(spacing: 18) {
             surfaceButton(L("会议记录"), id: "meetings")
             surfaceButton(L("实时识别"), id: "capture")
-            surfaceButton(L("回收站"), id: "trash")
             Spacer()
             menuButton
         }
@@ -708,22 +707,12 @@ struct MainWindowView: View {
 
     private func surfaceButton(_ title: String, id: String) -> some View {
         let on = surface == id
-        let count = (id == "trash") ? store.trashedSessions.count : 0
         return Button { surface = id } label: {
-            HStack(spacing: 5) {
-                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
-                    .foregroundStyle(on ? Palette.ink : Palette.secondary)
-                if id == "trash", count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(Capsule().fill(Palette.accent))
-                }
-            }
-            .padding(.bottom, 6)
-            .overlay(alignment: .bottom) { Rectangle().fill(on ? Palette.ink : .clear).frame(height: 2) }
-            .contentShape(Rectangle())
+            Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                .foregroundStyle(on ? Palette.ink : Palette.secondary)
+                .padding(.bottom, 6)
+                .overlay(alignment: .bottom) { Rectangle().fill(on ? Palette.ink : .clear).frame(height: 2) }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -778,6 +767,25 @@ struct MainWindowView: View {
             .padding(.horizontal, 12).frame(height: 30)
             .padding(.bottom, 6)
 
+            if surface == "trash" {
+                Button {
+                    surface = "meetings"
+                    selection = store.sessions.first?.id
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text(L("返回会议记录"))
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(Palette.ink)
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.bottom, 2)
+            }
+
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
@@ -829,12 +837,43 @@ struct MainWindowView: View {
                     DispatchQueue.main.async { withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) } }
                 }
             }
+            trashRow
         }
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
         .onChange(of: selection) { _, id in
             // A meeting picked from elsewhere (search, the notes window) shouldn't hide in a fold.
             if let id, let first = groups.first, !first.sessions.contains(where: { $0.id == id }) { showOlder = true }
         }
+    }
+
+    /// 回收站: a bottom row in the sidebar, always visible. It is a surface like the other two,
+    /// so it switches the same way and shows how many deleted meetings are waiting.
+    private var trashRow: some View {
+        let count = store.trashedSessions.count
+        let on = surface == "trash"
+        return Button { surface = "trash" } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "trash")
+                    .font(.system(size: 13, weight: .medium))
+                Text(L("回收站"))
+                    .font(.system(size: 13, weight: on ? .semibold : .regular))
+                Spacer(minLength: 0)
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(on ? Palette.accent : Palette.accent))
+                }
+            }
+            .foregroundStyle(on ? Palette.ink : Palette.secondary)
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 8).fill(on ? Color.white : Color.clear)
+                .shadow(color: on ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(on ? L("回收站") : L("查看已删除的会议"))
     }
 
     /// 今天 / 昨天 / 本周 / then one group per month, newest first.
