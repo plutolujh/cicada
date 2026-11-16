@@ -41,6 +41,8 @@ struct Session: Codable, Identifiable, Equatable {
     var voiceGuesses: [String: VoiceGuess]? = nil
     /// When the meeting was moved to the trash; nil for meetings still in the list.
     var deletedAt: Date? = nil
+    /// Pinned meetings stay at the top of the list, out of the time groups.
+    var pinned: Bool? = nil
 
     var duration: TimeInterval { (endedAt ?? Date()).timeIntervalSince(startedAt) }
 
@@ -305,6 +307,13 @@ final class SessionStore: ObservableObject {
             sessions[i].title = t
             sessions[i].renamed = true
         }
+        id == liveID ? scheduleSave(id) : saveNow(id)
+    }
+
+    /// Pins or unpins a meeting. Pinned meetings are shown in their own group at the top.
+    func togglePin(_ id: String) {
+        guard let i = index(id) else { return }
+        sessions[i].pinned = !(sessions[i].pinned ?? false)
         id == liveID ? scheduleSave(id) : saveNow(id)
     }
 

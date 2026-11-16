@@ -593,6 +593,9 @@ struct MainWindowView: View {
     @State private var showOlder = false
     /// The meeting list can be tucked away to give the record more room.
     @AppStorage("mainSidebarCollapsed") private var sidebarCollapsed = false
+    /// Inline rename state.
+    @State private var renamingID: String? = nil
+    @State private var renameDraft: String = ""
 
     /// Wide enough for the notes and the bilingual transcript side by side.
     private var sideBySide: Bool { showQuotes && wideEnough }
@@ -877,10 +880,18 @@ struct MainWindowView: View {
     }
 
     /// 今天 / 昨天 / 本周 / then one group per month, newest first.
+    /// Pinned meetings form their own group at the top, out of the time groups.
     private var groups: [(title: String, sessions: [Session])] {
         let cal = Calendar.current
         var out: [(title: String, sessions: [Session])] = []
         for s in filtered {
+            if s.pinned == true {
+                if out.isEmpty || out[0].title != L("固定") {
+                    out.insert((title: L("固定"), sessions: []), at: 0)
+                }
+                out[0].sessions.append(s)
+                continue
+            }
             let d = (surface == "trash" ? s.deletedAt : s.startedAt) ?? s.startedAt
             let title: String
             if surface == "trash" {
@@ -905,38 +916,82 @@ struct MainWindowView: View {
         let selected = s.id == (selection ?? current?.id)
         let live = s.id == store.liveID
         let inTrash = surface == "trash"
-        return Button {
-            selection = s.id
-            titleDraft = ""
-        } label: {
-            // Titles only: the time and length are on the page (and in the tooltip). Unpicked rows
-            // stay grey so the one being read stands out.
-            HStack(spacing: 8) {
-                if live { BreathingDot(size: 6) }
-                Text(Self.untitled(s) ? L("未命名会议") : Self.listTitle(s))
-                    .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected || live ? Palette.ink : Palette.secondary).lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white : Color.clear)
-                .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
-            .contentShape(Rectangle())
-        }
-        .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
-        .buttonStyle(.plain)
-        .contextMenu {
-            if inTrash {
-                Button(L("恢复")) { store.restore(s.id) }
-                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
-            } else {
-                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
-                if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
-                    Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
+        let isPinned = s.pinned == true
+        let isRenaming = renamingID == s.id
+
+        return ZStack {
+            Button {
+                if !isRenaming {
+                    selection = s.id
+                    titleDraft = ""
                 }
-                Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
+            } label: {
+                // Titles only: the time and length are on the page (and in the tooltip). Unpicked rows
+                // stay grey so the one being read stands out.
+                HStack(spacing: 8) {
+                    if live { BreathingDot(size: 6) }
+                    if isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Palette.accent)
+                    }
+                    if isRenaming {
+                        TextField("", text: $renameDraft)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(Palette.ink)
+                            .frame(maxWidth: .infinity)
+                            .onSubmit { commitRename(s.id) }
+                            .onExitCommand { cancelRename() }
+                    } else {
+                        Text(Self.untitled(s) ? L("未命名会议") : Self.listTitle(s))
+                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                            .foregroundStyle(selected || live ? Palette.ink : Palette.secondary).lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                }
+                .padding(.horizontal, 12).padding(.vertical, 9)
+                .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white : Color.clear)
+                    .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
+                .contentShape(Rectangle())
             }
+            .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
+            .buttonStyle(.plain)
+            .contextMenu {
+                if inTrash {
+                    Button(L("恢复")) { store.restore(s.id) }
+                    Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
+                } else {
+                    Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
+                    if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
+                        Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
+                    }
+                    Button(isPinned ? L("取消固定") : L("固定到顶部")) { store.togglePin(s.id) }
+                    Button(L("重命名")) { beginRename(s) }
+                    Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
+                }
+            }
+            .onTapGesture(count: 2) { if !inTrash && !live { beginRename(s) } }
         }
+    }
+
+    private func beginRename(_ s: Session) {
+        renamingID = s.id
+        renameDraft = s.title
+        // Focus the text field next run loop
+        DispatchQueue.main.async {
+            searchFocused = false
+        }
+    }
+
+    private func commitRename(_ id: String) {
+        store.rename(id, to: renameDraft)
+        cancelRename()
+    }
+
+    private func cancelRename() {
+        renamingID = nil
+        renameDraft = ""
     }
 
     private func when(_ s: Session) -> String {
