@@ -873,11 +873,7 @@ struct MainWindowView: View {
         }
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
         .overlay(alignment: .bottom) {
-            if editing {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .overlay { batchBar }
-            }
+            if editing { batchBar }
         }
         .onChange(of: selection) { _, id in
             // A meeting picked from elsewhere (search, the notes window) shouldn't hide in a fold.
