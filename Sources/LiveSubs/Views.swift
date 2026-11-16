@@ -596,6 +596,9 @@ struct MainWindowView: View {
     /// Inline rename state.
     @State private var renamingID: String? = nil
     @State private var renameDraft: String = ""
+    /// Batch operations: when editing, tap toggles selection instead of opening.
+    @State private var editing = false
+    @State private var selectedIDs = Set<String>()
 
     /// Wide enough for the notes and the bilingual transcript side by side.
     private var sideBySide: Bool { showQuotes && wideEnough }
@@ -747,24 +750,50 @@ struct MainWindowView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(Palette.secondary)
-                TextField("搜索", text: $query).textFieldStyle(.plain).focused($searchFocused)
-                if query.isEmpty {
-                    Text("⌘F").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                if editing {
+                    Button { editing = false; selectedIDs.removeAll() } label: {
+                        Text(L("完成")).font(.system(size: 13, weight: .medium)).foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 0)
+                    Button {
+                        let all = Set(filtered.filter { $0.id != store.liveID }.map(\.id))
+                        if selectedIDs == all { selectedIDs.removeAll() } else { selectedIDs = all }
+                    } label: {
+                        Text(selectedIDs == Set(filtered.filter { $0.id != store.liveID }.map(\.id)) && !selectedIDs.isEmpty ? L("取消全选") : L("全选"))
+                            .font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                    }
+                    .buttonStyle(.plain)
                 } else {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(Palette.secondary).help("清除")
+                    Image(systemName: "magnifyingglass").foregroundStyle(Palette.secondary)
+                    TextField("搜索", text: $query).textFieldStyle(.plain).focused($searchFocused)
+                    if query.isEmpty {
+                        Text("⌘F").font(.system(size: 11)).foregroundStyle(Palette.secondary)
+                    } else {
+                        Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                            .buttonStyle(.plain).foregroundStyle(Palette.secondary).help("清除")
+                    }
+                    Spacer(minLength: 0)
+                    if surface == "meetings" && !store.sessions.isEmpty {
+                        Button {
+                            editing = true
+                            selectedIDs.removeAll()
+                            renamingID = nil
+                        } label: {
+                            Text(L("编辑")).font(.system(size: 13)).foregroundStyle(Palette.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button { sidebarCollapsed = true } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Palette.secondary)
+                            .padding(4)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(L("收起会议列表"))
                 }
-                Spacer(minLength: 0)
-                Button { sidebarCollapsed = true } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Palette.secondary)
-                        .padding(4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(L("收起会议列表"))
             }
             .font(.system(size: 13))
             .padding(.horizontal, 12).frame(height: 30)
@@ -843,10 +872,67 @@ struct MainWindowView: View {
             trashRow
         }
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 14)
+        .overlay(alignment: .bottom) {
+            if editing {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .overlay { batchBar }
+            }
+        }
         .onChange(of: selection) { _, id in
             // A meeting picked from elsewhere (search, the notes window) shouldn't hide in a fold.
             if let id, let first = groups.first, !first.sessions.contains(where: { $0.id == id }) { showOlder = true }
         }
+        .onChange(of: surface) { _, new in
+            if new != "meetings" {
+                editing = false
+                selectedIDs.removeAll()
+            }
+        }
+    }
+
+    /// Bottom bar in edit mode: what to do with the selected meetings.
+    private var batchBar: some View {
+        HStack(spacing: 10) {
+            Text(selectedIDs.isEmpty ? L("选中会议后选择操作") : String(format: L("已选 %lld 条"), selectedIDs.count))
+                .font(.system(size: 12)).foregroundStyle(Palette.secondary)
+            Spacer(minLength: 0)
+            if !selectedIDs.isEmpty {
+                Button {
+                    store.delete(selectedIDs)
+                    selectedIDs.removeAll()
+                    editing = false
+                    selection = nil
+                } label: {
+                    Text(L("批量删除"))
+                        .font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.error)
+                }
+                .buttonStyle(.plain)
+                let picked = selectedIDs.compactMap { store.session($0) }.filter { !$0.lines.isEmpty }
+                if !picked.isEmpty {
+                    Button {
+                        model.exportBatch(picked)
+                        selectedIDs.removeAll()
+                        editing = false
+                    } label: {
+                        Text(L("批量导出"))
+                            .font(.system(size: 12, weight: .medium)).foregroundStyle(Palette.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .frame(maxWidth: .infinity)
+        .background(
+            UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12)
+                .fill(Color.white)
+                .shadow(color: Palette.ink.opacity(0.12), radius: 4, y: -2)
+        )
+        .overlay(alignment: .topLeading) {
+            Rectangle().fill(Self.hairline).frame(width: 232, height: 1)
+        }
+        .ignoresSafeArea(edges: .bottom)
     }
 
     /// 回收站: a bottom row in the sidebar, always visible. It is a surface like the other two,
@@ -918,16 +1004,26 @@ struct MainWindowView: View {
         let inTrash = surface == "trash"
         let isPinned = s.pinned == true
         let isRenaming = renamingID == s.id
+        let checked = selectedIDs.contains(s.id)
 
         // Titles only: the time and length are on the page (and in the tooltip). Unpicked rows
         // stay grey so the one being read stands out.
         return Button {
+            if editing {
+                if checked { selectedIDs.remove(s.id) } else { selectedIDs.insert(s.id) }
+                return
+            }
             if !isRenaming {
                 selection = s.id
                 titleDraft = ""
             }
         } label: {
             HStack(spacing: 8) {
+                if editing {
+                    Image(systemName: checked ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(checked ? Palette.accent : Palette.tertiary)
+                }
                 if live { BreathingDot(size: 6) }
                 if isPinned {
                     Image(systemName: "pin.fill")
@@ -944,20 +1040,24 @@ struct MainWindowView: View {
                         .onExitCommand { cancelRename() }
                 } else {
                     Text(Self.untitled(s) ? L("未命名会议") : Self.listTitle(s))
-                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                        .foregroundStyle(selected || live ? Palette.ink : Palette.secondary).lineLimit(1)
+                        .font(.system(size: 13, weight: (selected || checked) ? .semibold : .regular))
+                        .foregroundStyle(selected || live || checked ? Palette.ink : Palette.secondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
-            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white : Color.clear)
-                .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
+            .background(RoundedRectangle(cornerRadius: 8).fill(checked || selected ? Color.white : Color.clear)
+                .shadow(color: (checked || selected) ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
             .contentShape(Rectangle())
         }
         .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
         .buttonStyle(.plain)
         .contextMenu {
-            if inTrash {
+            if editing {
+                if !inTrash, !live {
+                    Button(L("重命名")) { beginRename(s) }
+                }
+            } else if inTrash {
                 Button(L("恢复")) { store.restore(s.id) }
                 Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
             } else {

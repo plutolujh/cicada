@@ -1035,3 +1035,11 @@
 "无法打开麦克风：%@" = "Can't open the microphone: %@";
 "录音太短了，请至少朗读 %lld 秒" = "Too short; read for at least %lld seconds";
 "没听清录音内容，请换个安静的地方再录一次" = "Couldn't make out the recording; try again somewhere quiet";
+
+/* Batch operations */
+"取消全选" = "Deselect All";
+"批量删除" = "Delete Selected";
+"批量导出" = "Export Selected";
+"选中会议后选择操作" = "Select meetings, then choose an action";
+"已选 %lld 条" = "%lld selected";
+"选择一个文件夹，每场会议导出成一个文件" = "Choose a folder; each meeting becomes a file";

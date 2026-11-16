@@ -329,6 +329,26 @@ final class SessionStore: ObservableObject {
         trashedSessions.sort { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
     }
 
+    /// Moves multiple meetings to the trash at once. Live sessions are skipped.
+    func delete(_ ids: Set<String>) {
+        // Remove by descending index so earlier removals don't shift later ones.
+        let targetIds = ids.filter { $0 != liveID }
+        let indices = targetIds.compactMap(index).sorted(by: >)
+        guard !indices.isEmpty else { return }
+        var moved: [Session] = []
+        for i in indices {
+            var s = sessions.remove(at: i)
+            s.deletedAt = Date()
+            try? FileManager.default.createDirectory(at: trashFolder(s.id), withIntermediateDirectories: true)
+            try? FileManager.default.moveItem(at: folder(s.id), to: trashFolder(s.id))
+            saveNow(s.id)
+            moved.append(s)
+        }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        trashedSessions.append(contentsOf: moved)
+        trashedSessions.sort { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
+    }
+
     /// Restore a meeting from the trash back to the meetings list.
     func restore(_ id: String) {
         guard let i = trashedIndex(id) else { return }

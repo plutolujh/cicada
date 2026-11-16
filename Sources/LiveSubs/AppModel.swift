@@ -1543,6 +1543,34 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Exports several meetings at once: pick a folder once, each meeting becomes a file in it.
+    func exportBatch(_ sessions: [Session]) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = L("选择一个文件夹，每场会议导出成一个文件")
+        if let w = NSApp.keyWindow, !(w is NSPanel), w.isVisible {
+            panel.beginSheetModal(for: w) { [weak self] r in
+                guard r == .OK, let self, let url = panel.url else { return }
+                self.writeBatch(sessions, to: url)
+            }
+            return
+        }
+        NSApp.activate()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        writeBatch(sessions, to: url)
+    }
+
+    private func writeBatch(_ sessions: [Session], to folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for s in sessions {
+            let name = s.displayTitle.replacingOccurrences(of: "/", with: "-")
+            let url = folder.appendingPathComponent(name).appendingPathExtension("md")
+            _ = writeExport(s, kind: "md", options: ExportOptions(), to: url)
+        }
+    }
+
     // MARK: Debug control (only with `defaults write com.wquguru.cicada debug -bool true`)
 
     func installDebugControl() {
