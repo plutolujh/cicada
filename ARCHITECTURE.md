@@ -262,3 +262,341 @@ flowchart TD
 `docs/superpowers/specs/2026-11-05-mic-capture-design.md`（麦克风作为会议第二个来源）
 是**独立设计**，不是从豆包学的：它要的是把房间里/旁边设备的声音也收进来，与「录自己说的话」
 是两件事。其 `ListenSource` 抽类方案未落地（见上）。
+
+---
+
+# 项目结构详细分析
+
+> 项目路径：`~/cicada`  
+> 项目名：`LiveSubs`（Package 名） / **Cicada 知了**（产品名，原名 Live Subs）  
+> 类型：macOS 菜单栏 App（Swift 5，SwiftPM，无 `.xcodeproj`，无第三方依赖）
+
+## 1. 顶层总览
+
+```text
+~/cicada/
+├── .build/                         # SwiftPM 构建产物与索引缓存
+├── .git/                           # Git 仓库元数据
+├── .githooks/                      # Git hooks（pre-commit）
+├── .github/                        # GitHub 配置（CI/发布说明）
+├── .vscode/                        # VS Code 调试配置
+├── build/                          # 本地打包/网站构建输出目录
+├── docs/                           # 设计文档、路线图、对比分析、素材图片
+├── Resources/                      # App 资源（本地化、模型、示例音频、DMG 素材）
+├── scripts/                        # 构建/测试/打包/发布/网站/文案同步脚本
+├── site/                           # 官网静态站点源码（cicada.indaloop.app）
+├── Sources/                        # Swift 源码（主 App + 图标生成器）
+├── Tests/                          # 单元测试
+├── tools/                          # 开发/调试辅助工具（lsctl 等）
+├── .DS_Store
+├── .gitignore
+├── 2026-11-05-doubao-record-comparison.md   # 豆包录音对比文档（根目录副本/工作稿）
+├── agentmemory-guide.md            # 项目内存/上下文指引
+├── AGENTS.md                       # 项目约束与开发规范（脚本强校验）
+├── ARCHITECTURE.md                 # 架构图与数据流说明
+├── CHANGELOG.md                    # 版本更新记录
+├── CLAUDE.md                       # 指向 CLAUDE 相关说明的入口（内容极简）
+├── findings.md                     # 调研/分析发现记录（工作文档）
+├── LICENSE                         # Apache-2.0
+├── Package.swift                   # Swift Package 定义
+├── README.md                       # 中文 README（默认）
+├── README.en.md                    # 英文 README
+├── task_plan.md                    # 任务规划文档（工作文档）
+└── 记录于 2026-11-04 12-29-05 下午.txt  # 本地记录文件
+```
+
+## 2. 根目录关键文件
+
+| 文件 | 作用 |
+|------|------|
+| `Package.swift` | SwiftPM 配置：包名 `LiveSubs`，平台 `macOS 26.0`，`swiftLanguageModes: .v5`；两个可执行目标 `LiveSubs`、`LiveSubsIcon`，一个测试目标 `LiveSubsTests` |
+| `AGENTS.md` | 项目硬规则与约定（权限/密钥/AI 调用路径/UI 约束/本地化/构建验证流程）；`scripts/check-agents.py` 与 pre-commit/CI 会校验 |
+| `ARCHITECTURE.md` | Mermaid 架构图、分层职责、关键数据流、听/录双采集管线设计说明 |
+| `README.md` / `README.en.md` | 产品介绍、功能、隐私、模型、安装、路线图、开发方式（中/英双语） |
+| `CHANGELOG.md` | 发布版本变更历史 |
+| `LICENSE` | Apache-2.0（BlackHole 驱动 GPL，安装时从官方地址下载，不随包分发） |
+| `findings.md` / `task_plan.md` | 开发过程中的调研结论与任务拆解（含豆包对比、未落地设计等） |
+| `2026-11-05-doubao-record-comparison.md` | 与豆包录音体验的对比与分期计划 |
+| `agentmemory-guide.md` | 项目上下文/记忆整理指引 |
+| `CLAUDE.md` | Claude 相关提示入口（当前仅占位性内容） |
+
+## 3. 源码结构（`Sources/`）
+
+```text
+Sources/
+├── LiveSubs/          # 主应用（65 个 Swift 文件）
+└── LiveSubsIcon/      # 图标生成器可执行目标（1 个 Swift 文件）
+    └── main.swift
+```
+
+### 3.1 `Sources/LiveSubs/` — 按职责分类（65 文件）
+
+#### A. 应用入口与总控
+| 文件 | 职责 |
+|------|------|
+| `AppModel.swift` | `@MainActor` 核心总线：协调 UI、引擎、存储、设置、调试命令；持有 `listen`/`recorder`/`notes` 等状态与生命周期 |
+| `AppMenu.swift` | 菜单栏菜单与快捷入口 |
+| `LoginItem.swift` | 登录项管理 |
+| `DevBuild.swift` | 开发构建标识/行为差异 |
+| `Diagnostics.swift` | 本地诊断信息记录（耗时/次数等，不上报） |
+
+#### B. 音频采集与路由（底层）
+| 文件 | 职责 |
+|------|------|
+| `SystemAudioTap.swift` | 系统声音进程音频抓取（Core Audio process tap） |
+| `AudioRouter.swift` | 音频回调缓冲与队列分发（UI/引擎线程边界） |
+| `SystemMic.swift` | 系统麦克风设备与权限/选择管理 |
+| `VirtualMic.swift` | BlackHole 2ch 虚拟麦克风安装、切换与输出管理 |
+| `MicUsers.swift` / `MicUsersView.swift` | 占用/使用麦克风的应用检测与展示 |
+| `RecordGate.swift` | 录音前置条件/门控判断 |
+| `RecordScope.swift` | 录音范围/模式控制 |
+
+#### C. 识别与采集引擎
+| 文件 | 职责 |
+|------|------|
+| `ListenEngine.swift` | 系统音频监听管线：tap → 语言检测/语音识别 → 字幕与会话文本 |
+| `RecordEngine.swift` | 麦克风录音识别：录音状态机、逐字/逐句结果、编辑/合并/拆分、回放、保存 |
+| `SpeakEngine.swift` | 同声传译：按键说话 → 识别/翻译 → 合成语音 → 虚拟麦克风输出 |
+| `SpeakTest.swift` / `SpeakTestView.swift` | 同声传译/发声测试流程与 UI |
+| `CaptureClock.swift` | 听/录共用计时器（暂停时冻结时长，恢复续走） |
+| `CaptureSource.swift` | 统一采集数据源 `CaptureFeed`（文本、电平、波形、来源状态）供 UI 读取 |
+| `AudioFileWriter.swift`* | 音频落盘（ADTS AAC 片段转 `.m4a`，在架构中提及；具体实现位于录音链路相关文件） |
+
+> *注：`AudioFileWriter` 在 `ARCHITECTURE.md` 中作为独立组件描述；实际代码分布以 `RecordEngine.swift` / 存储链路为准。*
+
+#### D. 语言、翻译与文本处理
+| 文件 | 职责 |
+|------|------|
+| `LanguageDetector.swift` | 语言识别 |
+| `Languages.swift` | 语言枚举/映射与展示信息 |
+| `LanguageSettings.swift` | 语言相关设置项 |
+| `Translator.swift` | 翻译服务封装（Google 翻译、Apple Translation 回退等） |
+| `Localization.swift` | `L("…")` 等本地化辅助 |
+| `InterfaceLanguage.swift` | 界面语言切换（`AppleLanguages`） |
+| `HeardText.swift` | 听写/识别文本模型与处理 |
+| `Corrector.swift` | 录音后自动纠错（同音字/标点等） |
+
+#### E. AI 服务与配置
+| 文件 | 职责 |
+|------|------|
+| `AIClient.swift` | 统一 AI 调用入口：限流、优先级、系统提示、错误处理 |
+| `AIProvider.swift` | Provider 协议与通用抽象 |
+| `LingProvider.swift` | Ling / Ming 服务实现 |
+| `MiniMaxProvider.swift` | MiniMax 服务实现 |
+| `CustomProvider.swift` | OpenAI 兼容自定义接口实现 |
+| `AISettings.swift` | AI 服务设置模型/密钥状态逻辑 |
+| `VoicePicker.swift` / `Voices.swift` | 语音/音色选择与目录 |
+
+#### F. 纪要与会话智能
+| 文件 | 职责 |
+|------|------|
+| `Notes.swift` | `NotesEngine`：实时纪要、总结、议题、结论/待办、鱼骨图、人名术语归一等 |
+| `SessionStore.swift` | 会话持久化：双语记录、纪要、原始录音、导出数据源 |
+| `SpeakerID.swift` | 实验性说话人识别（WeSpeaker Core ML 声纹，命名/编号能力） |
+| `MeetingEnd.swift` | 会议自动结束/暂停策略（静默检测、处理方式） |
+
+#### G. UI — 主界面与窗口
+| 文件 | 职责 |
+|------|------|
+| `Views.swift` | 主窗口与通用视图 |
+| `CaptureViews.swift` | 实时识别页（听/录双流展示、控制条、波形、电平、模式切换） |
+| `NotesWindow.swift` | 纪要窗口（AI 视图/文字总结、目录跳转、非激活面板、屏幕共享可见性控制） |
+| `NotesViews.swift` | 纪要内容渲染组件 |
+| `MindMapView.swift` | 鱼骨图/思维导图视图 |
+| `FishboneImage.swift` | 鱼骨图图像生成/导出辅助 |
+| `Overlay.swift` | 字幕条（悬浮字幕、鼠标悬停透明） |
+| `ListenPill.swift` | 菜单栏/状态胶囊 UI |
+| `FloatingPillWindow.swift` | 独立浮动胶囊窗口（无标题栏、可拖拽、置顶） |
+| `PillButtonRegions.swift` | 胶囊按钮命中区域与交互分区 |
+| `ScreenAnchor.swift` | 窗口/浮层定位辅助 |
+| `AboutPanel.swift` | 关于面板 |
+
+#### H. UI — 设置、引导与导出
+| 文件 | 职责 |
+|------|------|
+| `Settings.swift` | `AppSettings` 与各类设置键定义 |
+| `SettingsWindow.swift` | 设置窗口 UI（AI 服务、权限、同传、录音、语言等） |
+| `Onboarding.swift` | 四步新手引导（系统音频、示例会议、AI key、同传/虚拟麦克风） |
+| `OnboardingKey.swift` | 引导流程中的 key 输入/校验组件 |
+| `ExportSheet.swift` | 导出面板（AI 视图/文字总结/原始记录，Markdown/Word/PDF/SRT） |
+| `RecordSaving.swift` / `RecordSavingView.swift` | 录音保存/落盘进度与状态 UI |
+| `UpdateViews.swift` / `Updates.swift` / `UpdateChecker.swift` / `Updater.swift` | 更新检查、提示与安装流程 |
+| `Shortcuts.swift` | 快捷键定义与处理 |
+| `DMGBackground.swift` | DMG 背景生成相关（构建/打包辅助） |
+
+#### I. 其他
+| 文件 | 职责 |
+|------|------|
+| `InterfaceLanguage.swift` 等与本地化/系统集成辅助散布于上述分组 |
+
+> 注：部分文件职责有交叉（如 `CaptureViews.swift` 同时承担录音/听写 UI 与控制）；分类以主要职责为准。
+
+## 4. 资源结构（`Resources/`）
+
+```text
+Resources/
+├── dmg/
+│   └── DS_Store                    # DMG 窗口布局元数据
+├── en.lproj/
+│   ├── InfoPlist.strings
+│   ├── Localizable.strings
+│   └── Localizable.stringsdict
+├── ja.lproj/
+│   ├── InfoPlist.strings
+│   └── Localizable.strings
+├── ko.lproj/
+│   ├── InfoPlist.strings
+│   └── Localizable.strings
+├── zh-Hans.lproj/
+│   ├── InfoPlist.strings
+│   └── Localizable.strings
+├── models/
+│   └── SpeakerEmbedding.mlpackage/ # 说话人声纹模型（WeSpeaker ResNet34-LM, Core ML）
+│       ├── Data/com.apple.CoreML/model.mlmodel
+│       ├── Data/com.apple.CoreML/weights/weight.bin
+│       └── Manifest.json
+├── sample/
+│   └── sample.m4a                  # 示例会议音频（引导/测试）
+└── Info.plist                      # App Info.plist 模板/资源
+```
+
+## 5. 测试结构（`Tests/`）
+
+```text
+Tests/
+└── LiveSubsTests/                  # 16 个单元测试文件（纯逻辑/引擎行为）
+    ├── AudioFileTests.swift
+    ├── CaptureClockTests.swift
+    ├── CorrectorTests.swift
+    ├── ExportTests.swift
+    ├── HeardTextTests.swift
+    ├── InterfaceLanguageTests.swift
+    ├── LanguageTests.swift
+    ├── MeetingEndTests.swift
+    ├── MicUsersTests.swift
+    ├── PillDoubleClickTests.swift
+    ├── RecordEngineTests.swift
+    ├── RecordGateTests.swift
+    ├── SpeakerTests.swift
+    ├── SpeakScoreTests.swift
+    ├── SystemMicTests.swift
+    └── UpdateTests.swift
+```
+
+**特点**：聚焦纯逻辑与可单测组件（时钟、文本处理、导出、状态机、更新判断等）；涉及真实权限/音频设备/BlackHole 安装的流程需人工验证（见 `AGENTS.md`）。
+
+## 6. 脚本（`scripts/`）
+
+| 文件 | 作用 |
+|------|------|
+| `build.sh` | 编译 App（开发版/`RELEASE=1` 正式版），产出 `build/Cicada.app` |
+| `test.sh` | 运行 `AGENTS.md` 校验 + 单元测试 |
+| `package.sh` | 打包 DMG/zip 与 SHA-256 校验值 |
+| `release.sh` | 按提交生成 changelog 段并驱动发布流程（CI 发 tag） |
+| `release_notes.sh` | 发布说明辅助 |
+| `changelog.py` | 从 commit 生成/处理 changelog 内容 |
+| `check-agents.py` | 校验 `AGENTS.md` 结构与大小约束 |
+| `strings.py` | 本地化字符串同步（UI 文案变更后 `--write` 补 TODO） |
+| `site.py` | 官网静态站点生成器（读取模板/i18n/changelog 数据） |
+| `site-images.sh` | 官网/图标相关图片资源生成 |
+| `site-og.html` | OG 图生成模板 |
+| `deploy-site.sh` | 构建并部署官网到 Cloudflare Worker（`cicada-site`） |
+| `make-sample.sh` | 生成示例音频素材 |
+| `dmg-template.sh` | DMG 模板处理 |
+| `convert-voiceprint.py` | 将 WeSpeaker 声纹模型转换为 Core ML（`SpeakerEmbedding.mlpackage`） |
+
+## 7. 开发工具（`tools/`）
+
+| 文件 | 作用 |
+|------|------|
+| `lsctl` | 已编译的 CLI 工具（驱动 dev build，执行 `AppModel.debugCommand`） |
+| `lsctl.swift` | `lsctl` 源码 |
+| `README.md` | 工具使用说明与测试技巧（命令真值以 `AppModel.debugCommand` 为准） |
+| `key.swift` / `toggle-key.swift` | 按键模拟/切换辅助 |
+| `mouse` / `mouse.swift` | 鼠标操作辅助 |
+| `winall` / `winall.swift` | 窗口操作辅助 |
+| `transcribe.swift` | 转写相关辅助脚本/工具 |
+| `ccswitch-minimax-claude.py` | AI 服务/配置切换辅助脚本 |
+
+## 8. 文档与设计资料（`docs/`）
+
+```text
+docs/
+├── demo.gif
+├── icon.png
+├── interpreting.png
+├── onboarding.png
+├── records.png
+├── ROADMAP.md
+├── ROADMAP.zh-CN.md
+└── superpowers/specs/
+    ├── 2026-11-05-doubao-record-comparison.md
+    ├── 2026-11-05-mic-capture-design.md
+    ├── 2026-11-12-doubao-mic-ui-analysis.md
+    └── 2026-11-14-record-transcript-autocorrect-design.md
+```
+
+- **顶层图片/GIF**：README 与官网展示素材
+- **ROADMAP**：中英文路线图
+- **specs/**：功能对比、麦克风采集设计、UI 分析、转写自动纠错设计等方案文档
+
+## 9. 官网（`site/`）
+
+```text
+site/
+├── audio/
+│   ├── meeting-zh.m4a
+│   ├── speak-en.m4a
+│   └── speak-zh.m4a
+├── i18n/
+│   ├── en.json
+│   ├── ja.json
+│   ├── ko.json
+│   └── zh.json
+├── img/
+│   ├── hero.jpg
+│   └── start/
+│       ├── en-key.jpg
+│       ├── en-permissions.jpg
+│       ├── ja-key.jpg
+│       ├── ja-permissions.jpg
+│       ├── ko-key.jpg
+│       ├── ko-permissions.jpg
+│       ├── zh-key.jpg
+│       └── zh-permissions.jpg
+├── changelog.html
+├── changelog.json
+├── footer.html
+├── header.html
+├── icon.png
+├── icon.svg
+├── index.html
+├── og.png
+├── start.html
+└── style.css
+```
+
+- **多语言**：中文 `/`，英文/日文/韩文对应 `/en/` `/ja/` `/ko/`（由 `scripts/site.py` 生成到 `build/site` 或部署产物）
+- **内容源**：`i18n/*.json` 提供 `{{t.key}}` 文案；`changelog.json` 为官网更新日志数据
+- **素材**：产品截图、引导步骤图、音频示例、OG 图与图标
+
+## 10. 构建与工程辅助目录
+
+| 目录/文件 | 说明 |
+|-----------|------|
+| `.build/` | SwiftPM 构建缓存（`debug`/`release` 软链、`index-build/`、`manifest.pif`、`workspace-state.json` 等） |
+| `build/` | 本地构建输出：`Cicada.app`、`AppIcon.iconset`、`site/`（生成的静态站点） |
+| `.github/workflows/build.yml` | CI 构建流程 |
+| `.github/workflows/release.yml` | CI 发布流程 |
+| `.github/release-notes.md` | 发布说明模板/内容 |
+| `.githooks/pre-commit` | 提交前检查（含 `AGENTS.md` 约束相关校验） |
+| `.vscode/launch.json` | VS Code 调试配置 |
+
+## 11. 结构性特征总结
+
+1. **单包多目标**：`LiveSubs`（主 App）+ `LiveSubsIcon`（图标工具）+ `LiveSubsTests`，无外部依赖。
+2. **源码按“单文件单关注点”组织**：`Sources/LiveSubs/` 内 65 个 Swift 文件覆盖引擎、AI、UI、存储、系统集成，`AppModel.swift` 为最大协调中心（~132K）。
+3. **双采集管线、单纪要引擎**：系统音频（`ListenEngine`）与麦克风录音（`RecordEngine`）独立采集，统一写入 `CaptureFeed`/`SessionStore`，共享 `NotesEngine`。
+4. **AI 抽象清晰**：`AIClient` 统一治理，`AIProvider` 协议隔离 `Ling`/`MiniMax`/`Custom` 差异；密钥文件化（`0600`）且按服务分离。
+5. **产品化配套完整**：含引导、设置、导出、更新、诊断、网站、脚本化构建发布与本地化资源（zh/en/ja/ko）。
+6. **文档与演进痕迹丰富**：`AGENTS.md`/`ARCHITECTURE.md`/`docs/superpowers/specs/*`/`findings.md`/`task_plan.md` 记录了设计决策、对标分析与未落地方案。
