@@ -39,6 +39,8 @@ struct Session: Codable, Identifiable, Equatable {
     var voiceNames: [String: String]? = nil
     /// Names Ling read from the conversation, keyed by voice id; shown until the user says otherwise.
     var voiceGuesses: [String: VoiceGuess]? = nil
+    /// When the meeting was moved to the trash; nil for meetings still in the list.
+    var deletedAt: Date? = nil
 
     var duration: TimeInterval { (endedAt ?? Date()).timeIntervalSince(startedAt) }
 
@@ -61,44 +63,58 @@ struct Session: Codable, Identifiable, Equatable {
 }
 
 /// One folder per meeting under ~/Library/Application Support/LiveSubs/Sessions/<id>/:
-/// session.json, system.m4a (what you heard) and mic.m4a (what you said).
+/// session.json, system.m4a (what you heard) and mic.m4a (what you said). Deleted meetings
+/// are moved to ~/Library/Application Support/LiveSubs/Trash/<id>/ until restored or removed.
 @MainActor
 final class SessionStore: ObservableObject {
     @Published private(set) var sessions: [Session] = []
+    @Published private(set) var trashedSessions: [Session] = []
     @Published private(set) var liveID: String?
 
     let root: URL
+    let trashRoot: URL
     private var saveWork: DispatchWorkItem?
 
     init() {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        root = base.appendingPathComponent("\(DevBuild.supportFolder)/Sessions", isDirectory: true)
+        let support = base.appendingPathComponent(DevBuild.supportFolder, isDirectory: true)
+        root = support.appendingPathComponent("Sessions", isDirectory: true)
+        trashRoot = support.appendingPathComponent("Trash", isDirectory: true)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: trashRoot, withIntermediateDirectories: true)
         load()
     }
 
     func folder(_ id: String) -> URL { root.appendingPathComponent(id, isDirectory: true) }
+    func trashFolder(_ id: String) -> URL { trashRoot.appendingPathComponent(id, isDirectory: true) }
     func systemAudioURL(_ id: String) -> URL { folder(id).appendingPathComponent("system.m4a") }
     func micAudioURL(_ id: String) -> URL { folder(id).appendingPathComponent("mic.m4a") }
 
     private func load() {
-        let dirs = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
+        sessions = loadSessions(in: root).sorted { $0.startedAt > $1.startedAt }
+        trashedSessions = loadSessions(in: trashRoot).sorted { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
+    }
+
+    private func loadSessions(in directory: URL) -> [Session] {
+        let dirs = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         var out: [Session] = []
         for dir in dirs {
             if let data = try? Data(contentsOf: dir.appendingPathComponent("session.json")),
                var s = try? decoder.decode(Session.self, from: data) {
-                if s.endedAt == nil { s.endedAt = s.lines.last.map { s.startedAt.addingTimeInterval($0.t + 5) } ?? s.startedAt }
-                // The app quit mid-meeting: its recording is still in the partial file.
-                if s.id != liveID, hasPartialAudio(s.id) {
-                    s.hasAudio = true
-                    finishAudio(s.id)
+                if directory == root {
+                    if s.endedAt == nil { s.endedAt = s.lines.last.map { s.startedAt.addingTimeInterval($0.t + 5) } ?? s.startedAt }
+                    // The app quit mid-meeting: its recording is still in the partial file.
+                    if s.id != liveID, hasPartialAudio(s.id) {
+                        s.hasAudio = true
+                        finishAudio(s.id)
+                    }
                 }
                 out.append(s)
             }
         }
-        sessions = out.sorted { $0.startedAt > $1.startedAt }
+        return out
     }
 
     // MARK: Live session
@@ -292,15 +308,45 @@ final class SessionStore: ObservableObject {
         id == liveID ? scheduleSave(id) : saveNow(id)
     }
 
+    /// Moves a meeting to the trash instead of deleting it outright, so it can be restored.
     func delete(_ id: String) {
         guard id != liveID, let i = index(id) else { return }
-        try? FileManager.default.removeItem(at: folder(id))
-        sessions.remove(at: i)
+        var s = sessions.remove(at: i)
+        s.deletedAt = Date()
+        try? FileManager.default.createDirectory(at: trashFolder(s.id), withIntermediateDirectories: true)
+        try? FileManager.default.moveItem(at: folder(s.id), to: trashFolder(s.id))
+        saveNow(s.id)
+        trashedSessions.append(s)
+        trashedSessions.sort { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
     }
 
-    func session(_ id: String?) -> Session? { id.flatMap { index($0) }.map { sessions[$0] } }
+    /// Restore a meeting from the trash back to the meetings list.
+    func restore(_ id: String) {
+        guard let i = trashedIndex(id) else { return }
+        var s = trashedSessions.remove(at: i)
+        s.deletedAt = nil
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? FileManager.default.moveItem(at: trashFolder(s.id), to: folder(s.id))
+        saveNow(s.id)
+        sessions.insert(s, at: 0)
+        sessions.sort { $0.startedAt > $1.startedAt }
+    }
+
+    /// Permanently remove everything left in the trash.
+    func emptyTrash() {
+        for s in trashedSessions {
+            try? FileManager.default.removeItem(at: trashFolder(s.id))
+        }
+        trashedSessions.removeAll()
+    }
+
+    func session(_ id: String?) -> Session? {
+        guard let id else { return nil }
+        return sessions.first(where: { $0.id == id }) ?? trashedSessions.first(where: { $0.id == id })
+    }
 
     private func index(_ id: String) -> Int? { sessions.firstIndex(where: { $0.id == id }) }
+    private func trashedIndex(_ id: String) -> Int? { trashedSessions.firstIndex(where: { $0.id == id }) }
 
     private func scheduleSave(_ id: String) {
         saveWork?.cancel()
@@ -317,8 +363,9 @@ final class SessionStore: ObservableObject {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(s) else { return }
-        try? FileManager.default.createDirectory(at: folder(id), withIntermediateDirectories: true)
-        try? data.write(to: folder(id).appendingPathComponent("session.json"), options: .atomic)
+        let dir = s.deletedAt == nil ? folder(id) : trashFolder(id)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? data.write(to: dir.appendingPathComponent("session.json"), options: .atomic)
     }
 }
 

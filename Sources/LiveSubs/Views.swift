@@ -599,14 +599,22 @@ struct MainWindowView: View {
     private var wideEnough: Bool { detailWidth >= 940 }
 
     private var filtered: [Session] {
-        guard !query.isEmpty else { return store.sessions }
-        return store.sessions.filter { s in
+        let list = surface == "trash" ? store.trashedSessions : store.sessions
+        guard !query.isEmpty else { return list }
+        return list.filter { s in
             s.displayTitle.localizedCaseInsensitiveContains(query)
                 || s.lines.contains { $0.src.localizedCaseInsensitiveContains(query) || ($0.dst ?? "").localizedCaseInsensitiveContains(query) }
         }
     }
 
-    private var current: Session? { store.session(selection ?? store.sessions.first?.id) }
+    private var current: Session? {
+        if surface == "trash" {
+            let list = store.trashedSessions
+            if let id = selection, let s = list.first(where: { $0.id == id }) { return s }
+            return list.first
+        }
+        return store.session(selection ?? store.sessions.first?.id)
+    }
 
     var body: some View {
         // One white sheet; the list sits on a faint tint instead of behind a rule. The listening
@@ -614,6 +622,14 @@ struct MainWindowView: View {
         // welcome shows: an empty list is noise.
         HStack(spacing: 0) {
             if surface == "meetings", !store.sessions.isEmpty {
+                if sidebarCollapsed {
+                    sidebarToggle
+                } else {
+                    sidebar
+                        .frame(width: 232)
+                        .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
+                }
+            } else if surface == "trash" {
                 if sidebarCollapsed {
                     sidebarToggle
                 } else {
@@ -664,16 +680,22 @@ struct MainWindowView: View {
         if surface == "capture" { surface = "meetings" }
     }
 
-    /// 会议 / 录音: the two things the records window does.
+    /// 会议 / 录音 / 回收站: the three things the records window does.
     private var surfaceSwitch: some View {
         HStack(spacing: 18) {
             surfaceButton(L("会议记录"), id: "meetings")
             surfaceButton(L("实时识别"), id: "capture")
+            surfaceButton(L("回收站"), id: "trash")
             Spacer()
             menuButton
         }
         .padding(.horizontal, 24).padding(.top, 14).padding(.bottom, 10)
         .overlay(alignment: .bottom) { Rectangle().fill(Self.hairline).frame(height: 1) }
+        .onChange(of: surface) { _, new in
+            // Switch selection to something sensible in the new surface.
+            if new == "trash" { selection = store.trashedSessions.first?.id }
+            else if new == "meetings" { selection = store.sessions.first?.id }
+        }
     }
 
     /// Opens the menu bar panel (the same panel the menu bar icon opens).
@@ -696,12 +718,22 @@ struct MainWindowView: View {
 
     private func surfaceButton(_ title: String, id: String) -> some View {
         let on = surface == id
+        let count = (id == "trash") ? store.trashedSessions.count : 0
         return Button { surface = id } label: {
-            Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
-                .foregroundStyle(on ? Palette.ink : Palette.secondary)
-                .padding(.bottom, 6)
-                .overlay(alignment: .bottom) { Rectangle().fill(on ? Palette.ink : .clear).frame(height: 2) }
-                .contentShape(Rectangle())
+            HStack(spacing: 5) {
+                Text(title).font(.system(size: 13, weight: on ? .semibold : .regular))
+                    .foregroundStyle(on ? Palette.ink : Palette.secondary)
+                if id == "trash", count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Capsule().fill(Palette.accent))
+                }
+            }
+            .padding(.bottom, 6)
+            .overlay(alignment: .bottom) { Rectangle().fill(on ? Palette.ink : .clear).frame(height: 2) }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
@@ -770,7 +802,7 @@ struct MainWindowView: View {
                         if query.isEmpty && all.count > 1 {
                             Button { withAnimation(.easeOut(duration: 0.2)) { showOlder.toggle() } } label: {
                                 HStack {
-                                    Text(showOlder ? L("收起更早的会议") : L("更早的会议"))
+                                    Text(showOlder ? L("收起更早的会议") : (surface == "trash" ? L("更早的已删除会议") : L("更早的会议")))
                                     Spacer()
                                     Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold))
                                         .rotationEffect(.degrees(showOlder ? -90 : 0))
@@ -783,8 +815,19 @@ struct MainWindowView: View {
                             .padding(.top, 12)
                         }
                         if filtered.isEmpty {
-                            Text("没有找到“\(query)”").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                            Text(query.isEmpty ? (surface == "trash" ? L("回收站是空的") : L("还没有会议")) : "没有找到“\(query)”")
+                                .font(.system(size: 12)).foregroundStyle(Palette.secondary)
                                 .padding(.horizontal, 10)
+                        }
+                        if surface == "trash", !store.trashedSessions.isEmpty {
+                            Button(L("清空回收站"), role: .destructive) {
+                                store.emptyTrash()
+                                selection = nil
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 13)).foregroundStyle(Palette.error)
+                            .padding(.horizontal, 12).padding(.vertical, 9)
+                            .padding(.top, 6)
                         }
                     }
                 }
@@ -809,21 +852,30 @@ struct MainWindowView: View {
         let cal = Calendar.current
         var out: [(title: String, sessions: [Session])] = []
         for s in filtered {
-            let d = s.startedAt
+            let d = (surface == "trash" ? s.deletedAt : s.startedAt) ?? s.startedAt
             let title: String
-            if cal.isDateInToday(d) { title = L("今天") }
-            else if cal.isDateInYesterday(d) { title = L("昨天") }
-            else if cal.isDate(d, equalTo: Date(), toGranularity: .weekOfYear) { title = L("本周") }
-            else if cal.isDate(d, equalTo: Date(), toGranularity: .year) { title = dateText(d, "MMMM") }
-            else { title = dateText(d, "yMMMM") }
+            if surface == "trash" {
+                if cal.isDateInToday(d) { title = L("今天删除") }
+                else if cal.isDateInYesterday(d) { title = L("昨天删除") }
+                else if cal.isDate(d, equalTo: Date(), toGranularity: .weekOfYear) { title = L("本周删除") }
+                else if cal.isDate(d, equalTo: Date(), toGranularity: .year) { title = dateText(d, "MMMM") }
+                else { title = dateText(d, "yMMMM") }
+            } else {
+                if cal.isDateInToday(d) { title = L("今天") }
+                else if cal.isDateInYesterday(d) { title = L("昨天") }
+                else if cal.isDate(d, equalTo: Date(), toGranularity: .weekOfYear) { title = L("本周") }
+                else if cal.isDate(d, equalTo: Date(), toGranularity: .year) { title = dateText(d, "MMMM") }
+                else { title = dateText(d, "yMMMM") }
+            }
             if out.last?.title == title { out[out.count - 1].sessions.append(s) } else { out.append((title, [s])) }
         }
         return out
     }
 
     private func sessionRow(_ s: Session) -> some View {
-        let selected = s.id == (selection ?? store.sessions.first?.id)
+        let selected = s.id == (selection ?? current?.id)
         let live = s.id == store.liveID
+        let inTrash = surface == "trash"
         return Button {
             selection = s.id
             titleDraft = ""
@@ -842,14 +894,19 @@ struct MainWindowView: View {
                 .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
             .contentShape(Rectangle())
         }
-        .help(live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · "))
+        .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
         .buttonStyle(.plain)
         .contextMenu {
-            Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
-            if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
-                Button("恢复自动标题") { store.rename(s.id, to: "") }
+            if inTrash {
+                Button(L("恢复")) { store.restore(s.id) }
+                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
+            } else {
+                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
+                if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
+                    Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
+                }
+                Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
             }
-            Button("删除", role: .destructive) { store.delete(s.id) }.disabled(live)
         }
     }
 
@@ -935,7 +992,15 @@ struct MainWindowView: View {
             }
             .onChange(of: s.id) { _, _ in titleDraft = "" }
         } else {
-            welcome
+            if surface == "trash" {
+                VStack(spacing: 12) {
+                    Image(systemName: "trash").font(.system(size: 36, weight: .light)).foregroundStyle(Palette.tertiary)
+                    Text(L("回收站是空的")).font(.system(size: 15)).foregroundStyle(Palette.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                welcome
+            }
         }
     }
 

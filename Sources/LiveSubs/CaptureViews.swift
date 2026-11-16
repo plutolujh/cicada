@@ -134,7 +134,7 @@ struct CaptureView: View {
 
     private var left: some View {
         VStack(alignment: .leading, spacing: 0) {
-            sourceSwitch
+            topBar
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
             titleRow
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
@@ -142,6 +142,21 @@ struct CaptureView: View {
             Rectangle().fill(MainWindowView.hairline).frame(height: 1)
             transcript
         }
+    }
+
+    /// The source switch and the recording controls in one row.
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            ForEach(CaptureSource.allCases) { s in
+                sourceButton(s)
+            }
+            Spacer(minLength: 8)
+            exportButton
+            scope
+            clock
+            actionButtons
+        }
+        .padding(.horizontal, 20).padding(.vertical, 10)
     }
 
     /// The switch between the two ways in. It says which one is running, so the place where
@@ -296,27 +311,15 @@ struct CaptureView: View {
     private var controls: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 12) {
-                Spacer(minLength: 0)
                 chips
+                Spacer(minLength: 0)
                 displayPicker
-                exportButton
-                scope
-                clock
-                actionButtons
             }
             .padding(.horizontal, 20).padding(.vertical, 12)
 
             VStack(alignment: .leading, spacing: 8) {
                 chips
-                VStack(alignment: .leading, spacing: 8) {
-                    displayPicker
-                    exportButton
-                }
-                HStack(spacing: 12) {
-                    scope
-                    clock
-                    actionButtons
-                }
+                displayPicker
             }
             .padding(.horizontal, 20).padding(.vertical, 12)
         }
