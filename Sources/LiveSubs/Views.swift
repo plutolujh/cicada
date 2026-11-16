@@ -620,7 +620,7 @@ struct MainWindowView: View {
         // One white sheet; the list sits on a faint tint instead of behind a rule. The listening
         // pill lives in the window's toolbar (`MainToolbar`). With no meetings yet, only the
         // welcome shows: an empty list is noise.
-        HStack(spacing: 0) {
+        HStack(alignment: .top, spacing: 0) {
             if sidebarCollapsed {
                 sidebarToggle
             } else {
@@ -738,13 +738,16 @@ struct MainWindowView: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(Palette.secondary)
                 .padding(4)
+                .frame(width: 24, height: 30)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(Color.white)
         .help(L("展开会议列表"))
-        .frame(width: 16, height: 30, alignment: .top)
-        .padding(.top, 0)
+        .padding(.top, 10)
+        .padding(.horizontal, 6)
+        .frame(width: 36, alignment: .top)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
     }
 
     // MARK: Sidebar
