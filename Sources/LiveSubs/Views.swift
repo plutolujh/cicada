@@ -919,59 +919,56 @@ struct MainWindowView: View {
         let isPinned = s.pinned == true
         let isRenaming = renamingID == s.id
 
-        return ZStack {
-            Button {
-                if !isRenaming {
-                    selection = s.id
-                    titleDraft = ""
-                }
-            } label: {
-                // Titles only: the time and length are on the page (and in the tooltip). Unpicked rows
-                // stay grey so the one being read stands out.
-                HStack(spacing: 8) {
-                    if live { BreathingDot(size: 6) }
-                    if isPinned {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Palette.accent)
-                    }
-                    if isRenaming {
-                        TextField("", text: $renameDraft)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13, weight: .regular))
-                            .foregroundStyle(Palette.ink)
-                            .frame(maxWidth: .infinity)
-                            .onSubmit { commitRename(s.id) }
-                            .onExitCommand { cancelRename() }
-                    } else {
-                        Text(Self.untitled(s) ? L("未命名会议") : Self.listTitle(s))
-                            .font(.system(size: 13, weight: selected ? .semibold : .regular))
-                            .foregroundStyle(selected || live ? Palette.ink : Palette.secondary).lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                }
-                .padding(.horizontal, 12).padding(.vertical, 9)
-                .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white : Color.clear)
-                    .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
-                .contentShape(Rectangle())
+        // Titles only: the time and length are on the page (and in the tooltip). Unpicked rows
+        // stay grey so the one being read stands out.
+        return Button {
+            if !isRenaming {
+                selection = s.id
+                titleDraft = ""
             }
-            .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
-            .buttonStyle(.plain)
-            .contextMenu {
-                if inTrash {
-                    Button(L("恢复")) { store.restore(s.id) }
-                    Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
+        } label: {
+            HStack(spacing: 8) {
+                if live { BreathingDot(size: 6) }
+                if isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Palette.accent)
+                }
+                if isRenaming {
+                    TextField("", text: $renameDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .regular))
+                        .foregroundStyle(Palette.ink)
+                        .frame(maxWidth: .infinity)
+                        .onSubmit { commitRename(s.id) }
+                        .onExitCommand { cancelRename() }
                 } else {
-                    Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
-                    if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
-                        Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
-                    }
-                    Button(isPinned ? L("取消固定") : L("固定到顶部")) { store.togglePin(s.id) }
-                    Button(L("重命名")) { beginRename(s) }
-                    Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
+                    Text(Self.untitled(s) ? L("未命名会议") : Self.listTitle(s))
+                        .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                        .foregroundStyle(selected || live ? Palette.ink : Palette.secondary).lineLimit(1)
+                    Spacer(minLength: 0)
                 }
             }
-            .onTapGesture(count: 2) { if !inTrash && !live { beginRename(s) } }
+            .padding(.horizontal, 12).padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: 8).fill(selected ? Color.white : Color.clear)
+                .shadow(color: selected ? Palette.ink.opacity(0.06) : .clear, radius: 1.5, y: 1))
+            .contentShape(Rectangle())
+        }
+        .help(inTrash ? [when(s), Self.length(s), L("已删除")].joined(separator: " · ") : (live ? L("正在记录") : [when(s), Self.length(s)].joined(separator: " · ")))
+        .buttonStyle(.plain)
+        .contextMenu {
+            if inTrash {
+                Button(L("恢复")) { store.restore(s.id) }
+                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.trashFolder(s.id)]) }
+            } else {
+                Button(L("在 Finder 中显示")) { NSWorkspace.shared.activateFileViewerSelecting([store.folder(s.id)]) }
+                if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
+                    Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
+                }
+                Button(isPinned ? L("取消固定") : L("固定到顶部")) { store.togglePin(s.id) }
+                Button(L("重命名")) { beginRename(s) }
+                Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
+            }
         }
     }
 
