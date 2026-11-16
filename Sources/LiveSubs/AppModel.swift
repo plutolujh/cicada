@@ -92,6 +92,9 @@ final class AppModel: ObservableObject {
     @Published var exportRequest: ExportRequest?
     /// What the file should contain, and in which format.
     @Published var exportOptions = ExportOptions()
+    /// The AI view's diagram style, shared by every surface that shows it: the notes window,
+    /// the meeting record and the export. One pick, one look.
+    @Published var aiViewStyle: MindMapStyle = .auto
     /// Hold right ⌥ is chosen but "输入监控" isn't allowed yet.
     @Published var talkNeedsPermission = false
     @Published var toggleKeyTaken = false

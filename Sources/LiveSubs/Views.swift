@@ -1217,6 +1217,8 @@ struct SessionNotesView: View {
     let onJump: (Double) -> Void
 
     @State private var notesTab = "ai"
+    /// The AI view's diagram style, shared with the notes window and the export.
+    private var aiViewStyle: MindMapStyle { model.aiViewStyle }
     @State private var tocOpen = false
 
     private var live: Bool { session.id == model.store.liveID }
@@ -1252,6 +1254,7 @@ struct SessionNotesView: View {
                             AIView(notes: notes, live: live,
                                    updating: live && engine.state == .updating,
                                    summaryJustChanged: live && (engine.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false),
+                                   style: aiViewStyle,
                                    onJump: onJump)
                         }
                     } else if generating || (live && ai.hasKey && !session.lines.isEmpty) {

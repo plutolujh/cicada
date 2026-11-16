@@ -45,6 +45,9 @@ struct CaptureView: View {
     @State private var editText = ""
     /// Which right-pane tab is showing: "ai" (可视化) or "text" (文字总结).
     @State private var notesTab = "ai"
+    /// AI 视图中“为什么”图的样式：自动 / 平衡图 / 树形 / 鱼骨图 / 关系图。
+    /// Shared with the meeting record and the export, so one pick looks the same everywhere.
+    private var aiViewStyle: MindMapStyle { model.aiViewStyle }
     /// Whether the AI view's drawer-style table of contents is open over the visualization.
     @State private var tocOpen = false
     /// A moment picked in the notes (a fishbone branch, a time link): the transcript scrolls to it.
@@ -819,6 +822,7 @@ struct CaptureView: View {
                             AIView(notes: notes.notes, live: recording,
                                    updating: notes.state == .updating,
                                    summaryJustChanged: notes.summaryChangedAt.map { Date().timeIntervalSince($0) < 20 } ?? false,
+                                   style: aiViewStyle,
                                    onJump: { jumpToTime = $0 })
                             .padding(.horizontal, 20).padding(.vertical, 16)
                         }
@@ -920,6 +924,7 @@ struct AIView: View {
     var live = false
     var updating = false
     var summaryJustChanged = false
+    var style: MindMapStyle = .auto
     var onJump: (Double) -> Void = { _ in }
 
     var body: some View {
@@ -957,7 +962,7 @@ struct AIView: View {
                                 Spacer(minLength: 0)
                             }
                             if let fish = topic.fishbone {
-                                FishboneView(fishbone: fish, onJump: onJump)
+                                AdaptiveMindMapView(fishbone: fish, style: style, onJump: onJump)
                             }
                             if !topic.points.isEmpty {
                                 VStack(alignment: .leading, spacing: 6) {

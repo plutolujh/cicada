@@ -208,6 +208,7 @@
 "正在整理…" = "Putting it together…";
 "正在更新…" = "Updating…";
 "目录" = "Contents";
+"AI 视图样式" = "AI view style";
 "重新总结" = "Summarize again";
 "AI 视图" = "AI View";
 "文字总结" = "Text Summary";
@@ -383,19 +384,25 @@
 "%@，对方能听到译文" = "%@: they hear the translation";
 "其他麦克风" = "Another mic";
 
+/* MindMapView */
+"自动" = "Auto";
+"平衡图" = "Balanced map";
+"树形" = "Tree";
+"鱼骨图" = "Fishbone";
+"关系图" = "Relation Graph";
+"点击分支跳回原话" = "Click a branch to jump to what was said";
+"为什么" = "Why";
+"依据较少，仅供参考" = "Little evidence; for reference only";
+"看原话" = "See what was said";
+
 /* MiniMaxProvider */
 "在 MiniMax 开放平台创建 API Key，复制那串密钥。" = "Create an API key on the MiniMax platform and copy it.";
 
 /* NotesViews */
 "正在讲" = "Now";
 "新" = "New";
-"看原话" = "See what was said";
 "%@ 起" = "From %@";
 "回到原话" = "Back to transcript";
-"点击分支跳回原话" = "Click a branch to jump to what was said";
-"鱼骨图" = "Fishbone";
-"为什么" = "Why";
-"依据较少，仅供参考" = "Little evidence; for reference only";
 "说话的内容会出现在这里" = "What's said will appear here";
 "%lld 句新内容" = "%lld new lines";
 "正在说" = "Speaking";
@@ -406,6 +413,7 @@
 "收起" = "Hide";
 "展开全部 %lld 个" = "Show all %lld";
 " · 原识别 %@" = " · heard as %@";
+"原识别 %@" = "heard as %@";
 "有人开口后，约半分钟出第一版" = "First notes about 30 s after someone speaks";
 "会整理出" = "You'll get";
 "待办" = "To-dos";
@@ -446,7 +454,6 @@
 "繁" = "ZH-TW";
 "日" = "JA";
 "韩" = "KO";
-"自动" = "Auto";
 "打开语言设置" = "Open language settings";
 "这场会议" = "This meeting";
 "只改这一场，默认值在 设置 › 语言" = "Changes only this meeting; defaults are in Settings › Language";
