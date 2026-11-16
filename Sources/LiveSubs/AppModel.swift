@@ -1485,7 +1485,9 @@ final class AppModel: ObservableObject {
     }
 
     /// Opens the export panel for a meeting: what goes into the file, and in which format.
-    func requestExport(_ session: Session) {
+    /// The diagram style the reader last picked is the one the file gets.
+    func requestExport(_ session: Session, mindMapStyle: MindMapStyle? = nil) {
+        exportOptions.mindMapStyle = mindMapStyle ?? aiViewStyle
         exportRequest = ExportRequest(id: session.id, session: session)
         showExportPanel?()
     }
@@ -1527,9 +1529,7 @@ final class AppModel: ObservableObject {
     @discardableResult
     func writeExport(_ session: Session, kind: String, options: ExportOptions = ExportOptions(), to url: URL) -> Bool {
         do {
-            // The fishbones are drawn the way the meeting record draws them, so the file has
-            // the same diagram the reader saw.
-            let images = options.aiView ? FishboneImage.images(session.notes ?? MeetingNotes()) : [:]
+            let images = options.aiView ? FishboneImage.images(session.notes ?? MeetingNotes(), style: options.mindMapStyle) : [:]
             switch kind {
             case "word": try TranscriptExport.docx(session, options: options, images: images).write(to: url)
             case "srt": try TranscriptExport.srt(session).write(to: url, atomically: true, encoding: .utf8)
@@ -2205,6 +2205,12 @@ final class AppModel: ObservableObject {
                 exportOptions.transcript = picks.contains("lines")
             }
             if p.count > 1, let f = ExportOptions.Format(rawValue: p[1]) { exportOptions.format = f }
+        case "exportStyle":
+            // exportStyle:radial|tree|fishbone|graph|auto: how the exported AI view draws each topic.
+            if let s = MindMapStyle(rawValue: arg) {
+                exportOptions.mindMapStyle = s
+                aiViewStyle = s
+            }
         case "exportWrite":
             // exportWrite:<session id>=<path>: write the export with the panel's choices, no save panel.
             let p = arg.split(separator: "=", maxSplits: 1).map(String.init)

@@ -347,6 +347,8 @@ struct ExportOptions {
     /// The transcript: what was said, and what it was translated to.
     var transcript = true
     var format: Format = .md
+    /// How the AI view draws each topic's diagram in the export (平衡图 / 树形 / 鱼骨图 / 自动).
+    var mindMapStyle: MindMapStyle = .auto
 
     /// Nothing to write: the file would be empty.
     var isEmpty: Bool { !aiView && !textSummary && !transcript }

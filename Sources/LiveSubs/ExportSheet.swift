@@ -49,6 +49,9 @@ struct ExportSheet: View {
             row(L("AI 视图"), L("议题、鱼骨图、结论和待办"), $model.exportOptions.aiView)
             row(L("文字总结"), L("总结和议题的文字"), $model.exportOptions.textSummary)
             row(L("原始记录"), L("原话和翻译"), $model.exportOptions.transcript)
+            if options.aiView {
+                MindMapStylePicker(style: $model.exportOptions.mindMapStyle)
+            }
         }
     }
 
