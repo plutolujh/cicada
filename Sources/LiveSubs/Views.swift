@@ -799,6 +799,10 @@ struct MainWindowView: View {
             .padding(.horizontal, 12).frame(height: 30)
             .padding(.bottom, 6)
 
+            if surface == "meetings" {
+                meetingStatsBar
+            }
+
             if surface == "trash" {
                 Button {
                     surface = "meetings"
@@ -929,6 +933,25 @@ struct MainWindowView: View {
             Rectangle().fill(Self.hairline).frame(width: 232, height: 1)
         }
         .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// 会议记录统计：总数 / 总时长 / 占用空间
+    private var meetingStatsBar: some View {
+        let totalCount = filtered.count
+        let totalDuration = filtered.reduce(0) { $0 + $1.duration }
+        let totalSize = filtered.reduce(Int64(0)) { $0 + store.folderSize($1.id) }
+        let durStr = Self.formatDuration(totalDuration)
+        let sizeStr = Self.formatBytes(totalSize)
+        return HStack(spacing: 12) {
+            Text("\(totalCount) \(L("场"))")
+            Text("·")
+            Text("\(durStr) \(L("总时长"))")
+            Text("·")
+            Text("\(sizeStr) \(L("占用空间"))")
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(Palette.tertiary)
+        .padding(.horizontal, 12).padding(.vertical, 4)
     }
 
     /// 回收站: a bottom row in the sidebar, always visible. It is a surface like the other two,
@@ -1113,6 +1136,23 @@ struct MainWindowView: View {
         let mins = Int(s.duration / 60)
         if mins < 1 { return L("不到 1 分钟") }
         return mins < 60 ? L("\(mins) 分钟") : mins % 60 == 0 ? L("\(mins / 60) 小时") : L("\(mins / 60) 小时 \(mins % 60) 分")
+    }
+
+    /// Total duration like "2 小时 15 分钟".
+    static func formatDuration(_ seconds: TimeInterval) -> String {
+        let mins = Int(seconds / 60)
+        if mins < 1 { return L("不到 1 分钟") }
+        return mins < 60 ? L("\(mins) 分钟") : mins % 60 == 0 ? L("\(mins / 60) 小时") : L("\(mins / 60) 小时 \(mins % 60) 分")
+    }
+
+    /// Human-readable byte count: "1.2 GB".
+    static func formatBytes(_ bytes: Int64) -> String {
+        let units: [(Int64, String)] = [(1 << 40, "TB"), (1 << 30, "GB"), (1 << 20, "MB"), (1 << 10, "KB")]
+        for (divisor, unit) in units where bytes >= divisor {
+            let v = Double(bytes) / Double(divisor)
+            return "\(String(format: v.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", v)) \(unit)"
+        }
+        return "\(bytes) B"
     }
 
     /// "英 → 中" (short) or "英语 → 中文", from the most common pair among the lines.

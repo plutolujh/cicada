@@ -92,6 +92,19 @@ final class SessionStore: ObservableObject {
     func systemAudioURL(_ id: String) -> URL { folder(id).appendingPathComponent("system.m4a") }
     func micAudioURL(_ id: String) -> URL { folder(id).appendingPathComponent("mic.m4a") }
 
+    /// Total size on disk of a meeting's folder (audio, transcript, notes, etc.).
+    func folderSize(_ id: String) -> Int64 {
+        let url = folder(id)
+        guard let en = FileManager.default.enumerator(at: url, includingPropertiesForKeys: [.fileSizeKey, .isDirectoryKey]) else { return 0 }
+        var total: Int64 = 0
+        for case let file as URL in en {
+            let vals = try? file.resourceValues(forKeys: [.fileSizeKey, .isDirectoryKey])
+            if vals?.isDirectory == true { continue }
+            total += Int64(vals?.fileSize ?? 0)
+        }
+        return total
+    }
+
     private func load() {
         sessions = loadSessions(in: root).sorted { $0.startedAt > $1.startedAt }
         trashedSessions = loadSessions(in: trashRoot).sorted { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }

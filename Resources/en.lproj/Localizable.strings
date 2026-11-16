@@ -155,6 +155,7 @@
 "%@ 已挂断" = "%@ hung up";
 "已经 %lld 分钟没人说话" = "No one has spoken for %lld min";
 "%lld 秒后结束会议并整理纪要" = "Ending in %lld s and writing up the notes";
+"选择一个文件夹，每场会议导出成一个文件" = "Choose a folder; each meeting becomes a file";
 "欢迎使用%@" = "Welcome to %@";
 "导出会议记录" = "Export the meeting record";
 "设置" = "Settings";
@@ -901,6 +902,7 @@
 "菜单" = "Menu";
 "搜索" = "Search";
 "收起会议列表" = "Collapse meeting list";
+"取消全选" = "Deselect All";
 "返回会议记录" = "Back to Meetings";
 "回收站是空的" = "Trash is empty";
 "还没有会议" = "No meetings yet";
@@ -912,20 +914,27 @@
 "今天" = "Today";
 "昨天" = "Yesterday";
 "本周" = "This Week";
+"已删除" = "Deleted";
 "收起更早的会议" = "Hide earlier meetings";
 "更早的已删除会议" = "Earlier deleted meetings";
 "更早的会议" = "Earlier meetings";
 "回收站" = "Trash";
 "查看已删除的会议" = "View deleted meetings";
-"已删除" = "Deleted";
-"未命名会议" = "Untitled meeting";
+"选中会议后选择操作" = "Select meetings, then choose an action";
+"已选 %lld 条" = "%lld selected";
+"批量删除" = "Delete Selected";
+"批量导出" = "Export Selected";
 "%lld 小时" = "%lld h";
 "%lld 小时 %lld 分" = "%lld h %lld min";
+"场" = "meetings";
+"总时长" = "total time";
+"占用空间" = "storage";
+"未命名会议" = "Untitled meeting";
+"重命名" = "Rename";
 "在 Finder 中显示" = "Show in Finder";
 "恢复自动标题" = "Restore Automatic Title";
 "取消固定" = "Unpin";
 "固定到顶部" = "Pin to top";
-"重命名" = "Rename";
 "删除" = "Delete";
 "英语" = "English";
 "日语" = "Japanese";
@@ -1035,11 +1044,3 @@
 "无法打开麦克风：%@" = "Can't open the microphone: %@";
 "录音太短了，请至少朗读 %lld 秒" = "Too short; read for at least %lld seconds";
 "没听清录音内容，请换个安静的地方再录一次" = "Couldn't make out the recording; try again somewhere quiet";
-
-/* Batch operations */
-"取消全选" = "Deselect All";
-"批量删除" = "Delete Selected";
-"批量导出" = "Export Selected";
-"选中会议后选择操作" = "Select meetings, then choose an action";
-"已选 %lld 条" = "%lld selected";
-"选择一个文件夹，每场会议导出成一个文件" = "Choose a folder; each meeting becomes a file";
