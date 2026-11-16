@@ -591,6 +591,8 @@ struct MainWindowView: View {
     /// The bilingual column beside the notes is opt-in: three full columns of text read as crowded.
     @AppStorage("mainShowQuotes") private var showQuotes = false
     @State private var showOlder = false
+    /// The meeting list can be tucked away to give the record more room.
+    @AppStorage("mainSidebarCollapsed") private var sidebarCollapsed = false
 
     /// Wide enough for the notes and the bilingual transcript side by side.
     private var sideBySide: Bool { showQuotes && wideEnough }
@@ -612,9 +614,13 @@ struct MainWindowView: View {
         // welcome shows: an empty list is noise.
         HStack(spacing: 0) {
             if surface == "meetings", !store.sessions.isEmpty {
-                sidebar
-                    .frame(width: 232)
-                    .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
+                if sidebarCollapsed {
+                    sidebarToggle
+                } else {
+                    sidebar
+                        .frame(width: 232)
+                        .background(UnevenRoundedRectangle(topTrailingRadius: 14).fill(Self.listTint).ignoresSafeArea(edges: .bottom))
+                }
             }
             VStack(spacing: 0) {
                 surfaceSwitch
@@ -703,6 +709,25 @@ struct MainWindowView: View {
     static let hairline = Color(red: 0.941, green: 0.945, blue: 0.957)
     static let listTint = Color(red: 0.98, green: 0.98, blue: 0.984)
 
+    /// A thin bar at the edge when the sidebar is collapsed; clicking it expands the sidebar.
+    private var sidebarToggle: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            Button { sidebarCollapsed = false } label: {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Palette.secondary)
+                    .frame(width: 16, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .background(Color.white)
+            .help(L("展开会议列表"))
+            Spacer()
+        }
+        .frame(width: 16)
+    }
+
     // MARK: Sidebar
 
     private var sidebar: some View {
@@ -716,6 +741,16 @@ struct MainWindowView: View {
                     Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.plain).foregroundStyle(Palette.secondary).help("清除")
                 }
+                Spacer(minLength: 0)
+                Button { sidebarCollapsed = true } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Palette.secondary)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(L("收起会议列表"))
             }
             .font(.system(size: 13))
             .padding(.horizontal, 12).frame(height: 30)
