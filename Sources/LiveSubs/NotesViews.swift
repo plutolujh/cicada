@@ -21,11 +21,15 @@ struct NotesContentView: View {
     var coveredUntil: Double?
     /// Where the last topic ends when the meeting is over (its last line).
     var endedAt: Double?
+    /// Whether the "why" diagram is drawn with the topics. The text summary leaves it out:
+    /// that tab is words only, the diagram belongs to the AI view.
+    var showsDiagram = true
     var onJump: (Double) -> Void = { _ in }
 
     var body: some View {
         if document {
-            DocumentNotesView(notes: notes, fresh: fresh, live: live, updating: updating, endedAt: endedAt, onJump: onJump)
+            DocumentNotesView(notes: notes, fresh: fresh, live: live, updating: updating, endedAt: endedAt,
+                              showsDiagram: showsDiagram, onJump: onJump)
         } else {
             cards
         }
@@ -61,7 +65,8 @@ struct NotesContentView: View {
                         TopicView(topic: topic,
                                   end: i + 1 < notes.topics.count ? notes.topics[i + 1].start : (live ? nil : endedAt),
                                   current: live && i == notes.topics.count - 1,
-                                  updating: updating && i == notes.topics.count - 1, fresh: fresh, onJump: onJump)
+                                  updating: updating && i == notes.topics.count - 1,
+                                  fresh: fresh, showsDiagram: showsDiagram, onJump: onJump)
                             .padding(.vertical, document ? 14 : 0)
                             .id(Self.topicID(topic))
                     }
@@ -140,6 +145,7 @@ private struct DocumentNotesView: View {
     let live: Bool
     let updating: Bool
     let endedAt: Double?
+    let showsDiagram: Bool
     let onJump: (Double) -> Void
 
     var body: some View {
@@ -172,6 +178,7 @@ private struct DocumentNotesView: View {
                         Rectangle().fill(MainWindowView.hairline).frame(height: 1)
                         DocumentTopicRow(index: i, topic: topic, current: current,
                                          updating: updating && current, fresh: fresh,
+                                         showsDiagram: showsDiagram,
                                          startOpen: i == 0 || current, onJump: onJump)
                             .id(NotesContentView.topicID(topic))
                     }
@@ -242,13 +249,15 @@ private struct DocumentTopicRow: View {
     let current: Bool
     let updating: Bool
     let fresh: Set<String>
+    /// Whether the "why" diagram is drawn under the points.
+    let showsDiagram: Bool
     let onJump: (Double) -> Void
     @State private var open: Bool
 
     init(index: Int, topic: NoteTopic, current: Bool, updating: Bool, fresh: Set<String>,
-         startOpen: Bool, onJump: @escaping (Double) -> Void) {
+         showsDiagram: Bool = true, startOpen: Bool, onJump: @escaping (Double) -> Void) {
         self.index = index; self.topic = topic; self.current = current; self.updating = updating
-        self.fresh = fresh; self.onJump = onJump
+        self.fresh = fresh; self.showsDiagram = showsDiagram; self.onJump = onJump
         _open = State(initialValue: startOpen)
     }
 
@@ -290,7 +299,9 @@ private struct DocumentTopicRow: View {
                         .help(topic.pointTime(i).map { NotesEngine.clock($0) } ?? "")
                         .modifier(FadeIn(active: fresh.contains(p)))
                     }
-                    if let fish = topic.fishbone { FishboneView(fishbone: fish, onJump: onJump).padding(.top, 4) }
+                    if showsDiagram, let fish = topic.fishbone {
+                        FishboneView(fishbone: fish, onJump: onJump).mindMapFrame().padding(.top, 4)
+                    }
                     if updating {
                         VStack(alignment: .leading, spacing: 7) {
                             SkeletonBar(fraction: 0.82, height: 10, warm: true)
@@ -314,6 +325,8 @@ private struct TopicView: View {
     let current: Bool
     let updating: Bool
     let fresh: Set<String>
+    /// Whether the "why" diagram is drawn under the points.
+    let showsDiagram: Bool
     let onJump: (Double) -> Void
 
     var body: some View {
@@ -347,7 +360,9 @@ private struct TopicView: View {
                     }
                     .modifier(FadeIn(active: fresh.contains(p)))
                 }
-                if let fish = topic.fishbone { FishboneView(fishbone: fish, onJump: onJump).padding(.top, 4) }
+                if showsDiagram, let fish = topic.fishbone {
+                    FishboneView(fishbone: fish, onJump: onJump).mindMapFrame().padding(.top, 4)
+                }
                 if updating {
                     VStack(alignment: .leading, spacing: 7) {
                         SkeletonBar(fraction: 0.82, height: 10, warm: true)
@@ -405,7 +420,7 @@ struct FishboneView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 6) {
-                Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 12)).foregroundStyle(Palette.secondary)
+                Image(systemName: "point.3.connected.trianglepath.dotted").font(.system(size: 12)).foregroundStyle(Palette.accent)
                 Text(fishbone.question.isEmpty ? L("为什么") : fishbone.question).font(.system(size: 13, weight: .bold))
                 Spacer()
                 Text("鱼骨图").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
@@ -413,10 +428,10 @@ struct FishboneView: View {
             VStack(spacing: 6) {
                 ForEach(Array(stride(from: 0, to: fishbone.branches.count, by: 2)), id: \.self) { i in
                     HStack(alignment: .center, spacing: 0) {
-                        branch(fishbone.branches[i])
-                        spine
+                        branch(fishbone.branches[i], index: i)
+                        spine(i)
                         if i + 1 < fishbone.branches.count {
-                            branch(fishbone.branches[i + 1])
+                            branch(fishbone.branches[i + 1], index: i + 1)
                         } else {
                             Color.clear.frame(maxWidth: .infinity)
                         }
@@ -425,24 +440,23 @@ struct FishboneView: View {
                 }
             }
             if showsHint {
-                Text("点击分支跳回原话").font(.system(size: 11)).foregroundStyle(Palette.tertiary)
+                Text(L("点击分支跳回原话")).font(.system(size: 11)).foregroundStyle(Palette.tertiary)
             }
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 16).stroke(Palette.line, lineWidth: 1))
     }
 
-    private var spine: some View {
+    private func spine(_ i: Int) -> some View {
         VStack(spacing: 0) {
-            Rectangle().fill(Color(white: 0.84)).frame(width: 2)
-            Circle().fill(Palette.ink).frame(width: 7, height: 7)
-            Rectangle().fill(Color(white: 0.84)).frame(width: 2)
+            Rectangle().fill(branchTint(i).opacity(0.45)).frame(width: 2)
+            Circle().fill(branchTint(i)).frame(width: 7, height: 7)
+            Rectangle().fill(branchTint(i).opacity(0.45)).frame(width: 2)
         }
         .frame(width: 18)
     }
 
-    private func branch(_ b: FishboneBranch) -> some View {
+    private func branch(_ b: FishboneBranch, index: Int) -> some View {
         let weak = b.support == 0
+        let tint = branchTint(index)
         return Button { if let t = b.t { onJump(t) } } label: {
             VStack(alignment: .leading, spacing: 3) {
                 Text(b.label).font(.system(size: 12, weight: .bold)).foregroundStyle(weak ? Palette.tertiary : Palette.ink)
@@ -453,9 +467,10 @@ struct FishboneView: View {
             }
             .padding(.horizontal, 10).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(weak ? Color.clear : Palette.raised))
+            .background(RoundedRectangle(cornerRadius: 10).fill(weak ? Color.clear : tint.opacity(0.12)))
             .overlay(RoundedRectangle(cornerRadius: 10)
-                .stroke(weak ? Color(white: 0.8) : .clear, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                .stroke(weak ? Color(white: 0.8) : tint.opacity(0.35),
+                        style: weak ? StrokeStyle(lineWidth: 1, dash: [4, 3]) : StrokeStyle(lineWidth: 1)))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
