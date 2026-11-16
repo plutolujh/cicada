@@ -535,8 +535,10 @@ final class RecordEngine: ObservableObject {
     static func meter(_ rms: Float) -> Float {
         guard rms > 0 else { return 0 }
         let dB = 20 * log10(rms)
-        // -60 dB is silence, -10 dB is loud speech; anything above stays at the top.
-        let t = (dB + 60) / 50
+        // -68 dB is silence, -18 dB is loud speech; anything above stays at the top. The
+        // range is wide enough that a soft voice still moves the scope, and the top is
+        // high enough that ordinary speech does not sit against the ceiling.
+        let t = (dB + 68) / 50
         return min(1, max(0, t))
     }
 

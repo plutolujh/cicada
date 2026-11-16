@@ -2,10 +2,10 @@ import SwiftUI
 
 /// The scope next to the record button: it shows how loud the microphone hears you right now.
 ///
-/// The bars are the last few seconds, newest on the right, so a gap in the speech shows up as a
-/// gap. The height is relative to the loudest moment of that window, not to the absolute level:
-/// a scope that is always full when somebody talks says nothing about how loud they were, and a
-/// room that is quiet but constant would otherwise sit at the bottom of the box.
+/// The wave is the last few seconds, newest on the right, drawn as one smooth shape rather
+/// than bars: a curve reads the small rises and falls of a voice, where bars only show the
+/// loud parts. The height is relative to the loudest moment of that window, so a quiet voice
+/// still fills the box and a silent room still looks silent.
 struct RecordScope: View {
     /// The levels of the last seconds, 0…1, oldest first.
     var levels: [Float]
@@ -13,33 +13,75 @@ struct RecordScope: View {
     var live: Bool
 
     /// How wide the scope is.
-    private let width: CGFloat = 96
+    private let width: CGFloat = 76
     /// How tall it is.
     private let height: CGFloat = 26
-    /// How many bars there are, however many samples there are.
-    private let bars = 24
 
     var body: some View {
         Canvas { context, size in
-            let samples = levels
-            let step = size.width / CGFloat(bars)
-            let barWidth = max(1, step * 0.55)
-            for i in 0..<bars {
-                // The newest sample is on the right; older ones fill in to the left.
-                let index = samples.count - bars + i
-                guard index >= 0 else { continue }
-                let level = live ? CGFloat(samples[index]) : 0
-                let barHeight = max(1.5, level * size.height)
-                let x = CGFloat(i) * step + (step - barWidth) / 2
-                let rect = CGRect(x: x, y: (size.height - barHeight) / 2, width: barWidth, height: barHeight)
-                context.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2),
-                             with: .color(level > 0.02 ? Palette.accent : Palette.line))
+            let samples = live ? levels : []
+            let mid = size.height / 2
+            let half = max(1, mid - 2)
+
+            // The centre line the wave sits on.
+            context.stroke(Path { p in
+                p.move(to: CGPoint(x: 0, y: mid))
+                p.addLine(to: CGPoint(x: size.width, y: mid))
+            }, with: .color(Palette.line), lineWidth: 1)
+
+            guard samples.count > 1 else { return }
+
+            // Auto-gain: once there is sound, the loudest moment of the window fills most of
+            // the box, so a soft voice is still seen. A room that is only noise stays small,
+            // because it never reaches the threshold.
+            let peak = CGFloat(samples.max() ?? 0)
+            let gain: CGFloat = peak > 0.22 ? min(2.4, 0.66 / peak) : 1
+            let heights = samples.map { min(1, CGFloat($0) * gain) * half }
+
+            // One point per sample, spread across the width; the newest is on the right.
+            let step = size.width / CGFloat(max(heights.count - 1, 1))
+            let top = heights.enumerated().map { CGPoint(x: CGFloat($0.offset) * step, y: mid - $0.element) }
+            let bottom = heights.enumerated().reversed().map { CGPoint(x: CGFloat($0.offset) * step, y: mid + $0.element) }
+
+            let shape = closedWave(top: top, bottom: bottom)
+            context.fill(shape, with: .linearGradient(
+                Gradient(colors: [Palette.accent.opacity(0.75), Palette.accent.opacity(0.28),
+                                  Palette.accent.opacity(0.75)]),
+                startPoint: CGPoint(x: 0, y: 0), endPoint: CGPoint(x: 0, y: size.height)))
+
+            // The edge of the wave, a shade darker than the fill.
+            context.stroke(shape, with: .color(Palette.accent.opacity(0.55)), lineWidth: 1)
+
+            // The peak of the window, held as a mark on the right: how loud it got.
+            if let loudest = heights.max(), loudest > 1 {
+                let y = mid - loudest
+                context.stroke(Path { p in
+                    p.move(to: CGPoint(x: size.width - 5, y: y))
+                    p.addLine(to: CGPoint(x: size.width - 5, y: y + 6))
+                }, with: .color(Palette.accentInk.opacity(0.5)), lineWidth: 1.5)
             }
         }
         .frame(width: width, height: height)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Palette.fill))
-        .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Palette.line, lineWidth: 1))
+        .background(RoundedRectangle(cornerRadius: 8).fill(Palette.fill))
+        .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Palette.line, lineWidth: 1))
         .help(L("麦克风的响度"))
+    }
+
+    /// The wave as one closed shape: the upper edge forwards, the lower edge back.
+    private func closedWave(top: [CGPoint], bottom: [CGPoint]) -> Path {
+        var p = Path()
+        guard let first = top.first else { return p }
+        p.move(to: first)
+        for (a, b) in zip(top, top.dropFirst()) {
+            let dx = (b.x - a.x) / 3
+            p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+        }
+        for (a, b) in zip(bottom, bottom.dropFirst()) {
+            let dx = (b.x - a.x) / 3
+            p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+        }
+        p.closeSubpath()
+        return p
     }
 }
 
