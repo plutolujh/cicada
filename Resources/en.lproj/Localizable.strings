@@ -169,10 +169,10 @@
 "录房间里的声音：说话的人。" = "The microphone: the people in the room.";
 
 /* CaptureViews */
+"导出录音" = "Export the recording";
 "完成" = "Done";
 "修改标题" = "Rename";
 "原文、译文或双语" = "Original, translation, or both";
-"导出录音" = "Export the recording";
 "自动识别" = "Auto-detect";
 "保留音频" = "Keep audio";
 "录音翻译成哪种语言" = "Which language the recording is translated into";
@@ -208,7 +208,6 @@
 "正在整理…" = "Putting it together…";
 "正在更新…" = "Updating…";
 "目录" = "Contents";
-"AI 视图样式" = "AI view style";
 "重新总结" = "Summarize again";
 "AI 视图" = "AI View";
 "文字总结" = "Text Summary";
@@ -390,10 +389,10 @@
 "树形" = "Tree";
 "鱼骨图" = "Fishbone";
 "关系图" = "Relation Graph";
-"点击分支跳回原话" = "Click a branch to jump to what was said";
 "为什么" = "Why";
 "依据较少，仅供参考" = "Little evidence; for reference only";
 "看原话" = "See what was said";
+"点击分支跳回原话" = "Click a branch to jump to what was said";
 
 /* MiniMaxProvider */
 "在 MiniMax 开放平台创建 API Key，复制那串密钥。" = "Create an API key on the MiniMax platform and copy it.";
@@ -413,7 +412,6 @@
 "收起" = "Hide";
 "展开全部 %lld 个" = "Show all %lld";
 " · 原识别 %@" = " · heard as %@";
-"原识别 %@" = "heard as %@";
 "有人开口后，约半分钟出第一版" = "First notes about 30 s after someone speaks";
 "会整理出" = "You'll get";
 "待办" = "To-dos";
@@ -607,6 +605,7 @@
 "会议 %@" = "Meeting %@";
 "未识别" = "Unidentified";
 "不到 1 分钟" = "Under 1 min";
+"原识别 %@" = "heard as %@";
 
 /* SettingsWindow */
 "语言" = "Language";
@@ -897,14 +896,24 @@
 "对方听到 %@ · %@" = "They hear %@ · %@";
 "对方听到 %@" = "They hear %@";
 "实时识别" = "Live capture";
+"回收站" = "TODO";
 "打开面板" = "Open Panel";
 "菜单" = "Menu";
+"展开会议列表" = "TODO";
 "搜索" = "Search";
-"没有找到“%@”" = "Nothing found for “%@”";
+"收起会议列表" = "TODO";
+"回收站是空的" = "TODO";
+"还没有会议" = "No meetings yet";
+"清空回收站" = "TODO";
+"今天删除" = "TODO";
+"昨天删除" = "TODO";
+"本周删除" = "TODO";
 "今天" = "Today";
 "昨天" = "Yesterday";
 "本周" = "This Week";
+"已删除" = "TODO";
 "收起更早的会议" = "Hide earlier meetings";
+"更早的已删除会议" = "TODO";
 "更早的会议" = "Earlier meetings";
 "未命名会议" = "Untitled meeting";
 "%lld 小时" = "%lld h";
@@ -923,7 +932,6 @@
 "葡语" = "Portuguese";
 "正在听，说话的内容会出现在这里" = "Listening; what's said will appear here";
 "这场会议没有记录到内容" = "Nothing was recorded in this meeting";
-"还没有会议" = "No meetings yet";
 "打开会议或视频，开始听后，每一场都会存在这里。" = "Open a meeting or a video and start listening: each one is kept here.";
 "先听一段示例" = "Try a sample first";
 "收起原话" = "Hide original";
