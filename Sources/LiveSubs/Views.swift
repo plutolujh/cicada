@@ -1242,8 +1242,12 @@ struct SessionNotesView: View {
                                 tabButton(L("AI 视图"), id: "ai")
                                 tabButton(L("文字总结"), id: "text")
                             }
-                            .frame(maxWidth: .infinity)
+                            .frame(minWidth: 140, maxWidth: 190)
                             .background(RoundedRectangle(cornerRadius: 9).fill(Palette.fill))
+                            if notesTab == "ai" && !notes.topics.isEmpty {
+                                MindMapStylePicker(style: $model.aiViewStyle)
+                                    .layoutPriority(1)
+                            }
                         }
                         .padding(.bottom, 4)
 

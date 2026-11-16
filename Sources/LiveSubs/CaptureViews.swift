@@ -866,15 +866,28 @@ struct CaptureView: View {
         .padding(.horizontal, 20).padding(.vertical, 12)
     }
 
-    /// The two tabs: AI 视图 and 文字总结.
+    /// The two tabs: AI 视图 and 文字总结, and the style picker that follows them.
     private var notesTabs: some View {
+        HStack(spacing: 10) {
+            tabs
+            if notesTab == "ai" && !notes.notes.topics.isEmpty {
+                MindMapStylePicker(style: $model.aiViewStyle)
+                    .layoutPriority(1)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20).padding(.vertical, 6)
+    }
+
+    /// The two tabs in one grey track. The track is narrower than the pane so the style
+    /// picker can sit beside it.
+    private var tabs: some View {
         HStack(spacing: 0) {
             tabButton(L("AI 视图"), id: "ai")
             tabButton(L("文字总结"), id: "text")
         }
-        .frame(maxWidth: .infinity)
+        .frame(minWidth: 140, maxWidth: 190)
         .background(RoundedRectangle(cornerRadius: 9).fill(Palette.fill))
-        .padding(.horizontal, 20).padding(.vertical, 6)
     }
 
     private func tabButton(_ title: String, id: String) -> some View {
