@@ -1,0 +1,43 @@
+语音识别工具根据代码分析，我来为你总结 Cicada 的语音识别机制：
+
+## 语音识别工具
+
+Cicada 使用 macOS 原生 Speech framework，完全在本地运行，无需外部 API。
+
+### 核心组件
+
+| 组件 | 职责 |
+|---|---|
+| SpeechTranscriber | macOS 内置的实时转写引擎 |
+| SpeechAnalyzer | 处理音频流的分析器 |
+| LanguageDetector | 自动检测说话语言 |
+
+### 工作流程
+
+系统音频 → SystemAudioTap → AudioRouter → SpeechAnalyzer 
+→ SpeechTranscriber → 翻译 → 字幕
+
+### 语言检测原理
+
+LanguageDetector.swift 实现了一个智能的语言检测器：
+
+1. 多模型测试：对同一段音频用所有已安装的 SpeechTranscriber 语言模型分别转写
+2. 置信度评分：
+   - 基础分：转写置信度 × 有效字符数（置信度加权）
+   - 长度惩罚：过短输出视为噪音（<6 字符）
+   - 脚本惩罚：CJK 模型输出大量拉丁字母视为外语（0.75 倍）
+3. 选择最优模型：得分 ≥0.85 即认为可靠
+
+### 音频处理
+
+- AudioRouter.swift：格式转换 + 环形缓冲（10 秒）
+- 语音特征采集：16kHz 单声道浮点数，用于区分不同说话人
+- 异步队列处理：不阻塞音频线程
+
+### 文件位置
+
+- 主引擎：Sources/LiveSubs/ListenEngine.swift
+- 语言检测：Sources/LiveSubs/LanguageDetector.swift
+- 音频路由：Sources/LiveSubs/AudioRouter.swift
+
+总结：Cicada 完全依赖 macOS 原生的 Speech 框架，包括转写和语言检测都在本地完成，无需任何外部 API 调用。

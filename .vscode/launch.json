@@ -1,0 +1,44 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cicada}",
+            "name": "Debug LiveSubsIcon",
+            "target": "LiveSubsIcon",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug LiveSubsIcon"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cicada}",
+            "name": "Release LiveSubsIcon",
+            "target": "LiveSubsIcon",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release LiveSubsIcon"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cicada}",
+            "name": "Debug LiveSubs",
+            "target": "LiveSubs",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug LiveSubs"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:cicada}",
+            "name": "Release LiveSubs",
+            "target": "LiveSubs",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release LiveSubs"
+        }
+    ]
+}

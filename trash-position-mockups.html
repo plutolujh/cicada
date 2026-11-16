@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cicada — 回收站位置选项</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  :root {
+    --bg: #F3F4F6;
+    --fg: #15171C;
+    --card: #FFFFFF;
+    --accent: #E8552B;
+    --accent-hover: #D44A23;
+    --secondary: #5A5F6B;
+    --muted: #6B7080;
+    --border: #E5E7EB;
+    --hairline: #F0F1F5;
+    --listTint: #FAFAFC;
+    --ink: #15171C;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0B0C0F;
+      --fg: #F3F4F6;
+      --card: #15171C;
+      --accent: #FF7A5C;
+      --accent-hover: #FF8E76;
+      --secondary: #9AA0AD;
+      --muted: #6B7080;
+      --border: #25272D;
+      --hairline: #1F2126;
+      --listTint: #15171C;
+      --ink: #F3F4F6;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0B0C0F;
+    --fg: #F3F4F6;
+    --card: #15171C;
+    --accent: #FF7A5C;
+    --accent-hover: #FF8E76;
+    --secondary: #9AA0AD;
+    --muted: #6B7080;
+    --border: #25272D;
+    --hairline: #1F2126;
+    --listTint: #15171C;
+    --ink: #F3F4F6;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    line-height: 1.4;
+    padding: 24px max(16px, env(safe-area-inset-left, 0px)) 24px max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 24px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 8px;
+    text-wrap: balance;
+  }
+  p.sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 24px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+    gap: 24px;
+  }
+  .card-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: 640px;
+  }
+  .card-head {
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--listTint);
+  }
+  .badge-letter {
+    width: 26px; height: 26px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 13px;
+    display: grid; place-items: center;
+    flex-shrink: 0;
+  }
+  .card-title {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .card-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .mock {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    height: calc(100% - 68px);
+  }
+  .window-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--card);
+    margin-bottom: 0;
+  }
+  .switch-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .chip {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--secondary);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    cursor: default;
+  }
+  .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .chip.accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .spacer { flex: 1; }
+  .btn-text {
+    font-size: 12px;
+    color: var(--muted);
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .btn-text:hover { background: var(--hairline); }
+  .btn-icon {
+    width: 26px; height: 26px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: #fff;
+    color: var(--secondary);
+    display: grid; place-items: center;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .btn-icon:hover { border-color: var(--accent); color: var(--accent); }
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--accent);
+    border-radius: 10px;
+    padding: 1px 6px;
+    min-width: 18px;
+    text-align: center;
+    display: inline-block;
+    margin-left: 6px;
+  }
+  .content {
+    flex: 1;
+    overflow: auto;
+    padding: 20px 24px;
+    display: flex;
+    gap: 16px;
+  }
+  .sidebar {
+    width: 232px;
+    flex-shrink: 0;
+    background: var(--listTint);
+    border-radius: 12px;
+    border-top-right-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid transparent;
+  }
+  .sidebar.collapsed { width: 34px; }
+  .search {
+    position: relative;
+    height: 28px;
+  }
+  .search input {
+    width: 100%;
+    height: 28px;
+    padding: 0 8px 0 32px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: #fff;
+    font-size: 12px;
+    color: var(--ink);
+  }
+  .search::before { content: "🔍"; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; }
+  .list {
+    flex: 1;
+    overflow: auto;
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .list-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .list-item:hover { background: rgba(0,0,0,0.04); }
+  .list-item.active { background: rgba(232,85,43,0.12); color: var(--accent); }
+  .list-item svg { width: 14px; height: 14px; color: var(--muted); flex-shrink: 0; }
+  .list-item.active svg { color: var(--accent); }
+  .list-item .title { flex: 1; font-weight: 500; }
+  .list-item .meta { font-size: 10px; color: var(--muted); white-space: nowrap; }
+  .trash-bottom {
+    margin-top: auto;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-bottom: 4px;
+    cursor: pointer;
+    border-radius: 8px;
+  }
+  .trash-bottom:hover { background: rgba(0,0,0,0.04); }
+  .trash-bottom svg { width: 15px; height: 15px; color: var(--muted); flex-shrink: 0; }
+  .trash-bottom.active { background: var(--accent); color: #fff; }
+  .trash-bottom.active svg { color: #fff; }
+  .detail {
+    flex: 1;
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .detail-head {
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .detail-body { flex: 1; padding: 20px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .recommended {
+    position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+    padding: 2px 8px; border-radius: 10px; letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .option-label { position: relative; }
+  .empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--muted); font-size: 13px; gap: 6px;
+  }
+  .empty svg { width: 40px; height: 40px; color: var(--border); margin-bottom: 6px; }
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; }
+    body { padding: 12px max(16px, env(safe-area-inset-left, 0px)) 12px max(16px, env(safe-area-inset-right, 0px)); }
+  }
+  .hint {
+    margin-top: 16px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .hint b { color: var(--ink); }
+</style>
+</head>
+<body>
+<h1>Cicada 主窗口 — 回收站位置方案</h1>
+<p class="sub">四种摆放位置的对比，供选型。每个示例都按知了现有设计令牌绘制：背景 #F3F4F6，白色卡片，墨色 #15171C，强调色 #E8552B。</p>
+
+<div class="grid">
+  <!-- Option A: 侧边栏底部 -->
+  <div class="card-wrap">
+    <div class="card-head">
+      <div class="badge-letter">A</div>
+      <div>
+        <div class="card-title">方案 A：侧边栏底部（推荐）</div>
+        <div class="card-sub">回收站作为列表底部的一行，点击切换表面；图标旁边显示条目数量</div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="window-topbar">
+        <div class="switch-row">
+          <div class="chip active">会议记录</div>
+          <div class="chip">实时识别</div>
+          <div class="chip accent">🗑️ <span class="badge">3</span></div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-icon">⋮</button>
+      </div>
+      <div class="content">
+        <div class="sidebar">
+          <div class="search"><input placeholder="搜索会议"></div>
+          <div class="list">
+            <div class="list-item active">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">产品周会 · 2026-11-14</div>
+              <div class="meta">14:20 · 12 min</div>
+            </div>
+            <div class="list-item">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">技术同步 · 2026-11-12</div>
+              <div class="meta">10:05 · 38 min</div>
+            </div>
+            <div class="list-item">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">用户访谈 · 2026-11-10</div>
+              <div class="meta">16:30 · 22 min</div>
+            </div>
+          </div>
+          <div class="trash-bottom active">
+            <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M19 6v14c0 1 0 2-1 3H7c-1 0-1-2-1-3V6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M10 11v4M14 11v4M5 7h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span>回收站</span>
+            <span class="badge">3</span>
+          </div>
+        </div>
+        <div class="detail">
+          <div class="detail-head">回收站 — 已删除的会议记录</div>
+          <div class="detail-body">这里列出了被删除但尚未清空的会议记录。点击任意一条可“恢复”回到会议列表，或“清空回收站”彻底删除。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B: 顶部图标 -->
+  <div class="card-wrap">
+    <div class="card-head">
+      <div class="badge-letter">B</div>
+      <div>
+        <div class="card-title">方案 B：顶部标签栏中的图标</div>
+        <div class="card-sub">保持三个文本标签，回收站改为图标-only + 徽章，节省横向空间</div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="window-topbar">
+        <div class="switch-row">
+          <div class="chip active">会议记录</div>
+          <div class="chip">实时识别</div>
+          <button class="btn-icon accent" style="width:30px;height:30px;">🗑️ <span class="badge" style="position:absolute;top:4px;right:4px;font-size:9px;">3</span></button>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-icon">⋮</button>
+      </div>
+      <div class="content">
+        <div class="sidebar collapsed">
+          <div class="btn-icon" style="width:20px;height:20px;margin:2px auto;">◀</div>
+        </div>
+        <div class="detail">
+          <div class="detail-head">会议记录</div>
+          <div class="detail-body">侧边栏处于收起状态，主内容占满宽度。回收站通过顶部图标入口进入。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option C: 侧边栏顶部搜索旁 -->
+  <div class="card-wrap">
+    <div class="card-head">
+      <div class="badge-letter">C</div>
+      <div>
+        <div class="card-title">方案 C：侧边栏顶部搜索框旁</div>
+        <div class="card-sub">回收站图标与搜索框同行，位于侧边栏最上方，常驻可见</div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="window-topbar">
+        <div class="switch-row">
+          <div class="chip active">会议记录</div>
+          <div class="chip">实时识别</div>
+          <div class="chip">🗑️ <span class="badge">3</span></div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-icon">⋮</button>
+      </div>
+      <div class="content">
+        <div class="sidebar">
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;">
+            <div class="search" style="flex:1;"><input placeholder="搜索会议"></div>
+            <button class="btn-icon" style="width:28px;height:28px;">🗑️</button>
+          </div>
+          <div class="list">
+            <div class="list-item active">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">产品周会 · 2026-11-14</div>
+              <div class="meta">14:20 · 12 min</div>
+            </div>
+            <div class="list-item">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">技术同步 · 2026-11-12</div>
+              <div class="meta">10:05 · 38 min</div>
+            </div>
+          </div>
+        </div>
+        <div class="detail">
+          <div class="detail-head">会议记录</div>
+          <div class="detail-body">回收站图标常驻在侧边栏顶部，与搜索框并行，不占列表行。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Option D: 菜单栏下拉 -->
+  <div class="card-wrap">
+    <div class="card-head">
+      <div class="badge-letter">D</div>
+      <div>
+        <div class="card-title">方案 D：菜单栏下拉菜单</div>
+        <div class="card-sub">主窗口不做改动，回收站入口放在菜单栏图标的下拉菜单中</div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="window-topbar">
+        <div class="switch-row">
+          <div class="chip active">会议记录</div>
+          <div class="chip">实时识别</div>
+        </div>
+        <div class="spacer"></div>
+        <button class="btn-icon">⋮</button>
+      </div>
+      <div class="content">
+        <div class="sidebar">
+          <div class="search"><input placeholder="搜索会议"></div>
+          <div class="list">
+            <div class="list-item active">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">产品周会 · 2026-11-14</div>
+              <div class="meta">14:20 · 12 min</div>
+            </div>
+            <div class="list-item">
+              <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <div class="title">技术同步 · 2026-11-12</div>
+              <div class="meta">10:05 · 38 min</div>
+            </div>
+          </div>
+        </div>
+        <div class="detail">
+          <div class="detail-head">会议记录</div>
+          <div class="detail-body">主窗口布局不变，回收站通过菜单栏图标 → 下拉菜单 → “回收站” 进入。</div>
+        </div>
+      </div>
+      <div style="padding:10px 18px;border-top:1px solid var(--hairline);background:var(--listTint);font-size:11px;color:var(--muted);">
+        菜单栏图标下拉：会议记录 / 实时识别 / 回收站 (3) / 设置 / 退出
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="hint"><b>建议：</b>方案 A 最符合知了现有交互——回收站本身就是一个表面（与“会议记录”“实时识别”并列），放在侧边栏底部作为常驻行，既保持三表面切换的一致性，又不抢占顶部标签栏空间，且“清空回收站”可放在该表面的列表底部作为破坏性按钮。方案 B 适合侧边栏收起后作为图标入口；方案 C 在搜索框旁显得拥挤；方案 D 降低了回收站的可见度，不适合经常需要清理的场景。</p>
+
+</body>
+</html>

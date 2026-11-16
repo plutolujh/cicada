@@ -1566,7 +1566,12 @@ final class AppModel: ObservableObject {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         for s in sessions {
             let name = s.displayTitle.replacingOccurrences(of: "/", with: "-")
-            let url = folder.appendingPathComponent(name).appendingPathExtension("md")
+            var url = folder.appendingPathComponent(name).appendingPathExtension("md")
+            var suffix = 0
+            while FileManager.default.fileExists(atPath: url.path) {
+                suffix += 1
+                url = folder.appendingPathComponent("\(name) \(suffix)").appendingPathExtension("md")
+            }
             _ = writeExport(s, kind: "md", options: ExportOptions(), to: url)
         }
     }

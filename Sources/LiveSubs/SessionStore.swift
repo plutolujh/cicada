@@ -337,8 +337,8 @@ final class SessionStore: ObservableObject {
         s.deletedAt = Date()
         try? FileManager.default.createDirectory(at: trashFolder(s.id), withIntermediateDirectories: true)
         try? FileManager.default.moveItem(at: folder(s.id), to: trashFolder(s.id))
-        saveNow(s.id)
         trashedSessions.append(s)
+        saveNow(s.id) // now session(id) finds it in trashedSessions, so deletedAt gets persisted
         trashedSessions.sort { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
     }
 
@@ -348,17 +348,15 @@ final class SessionStore: ObservableObject {
         let targetIds = ids.filter { $0 != liveID }
         let indices = targetIds.compactMap(index).sorted(by: >)
         guard !indices.isEmpty else { return }
-        var moved: [Session] = []
         for i in indices {
             var s = sessions.remove(at: i)
             s.deletedAt = Date()
             try? FileManager.default.createDirectory(at: trashFolder(s.id), withIntermediateDirectories: true)
             try? FileManager.default.moveItem(at: folder(s.id), to: trashFolder(s.id))
-            saveNow(s.id)
-            moved.append(s)
+            trashedSessions.append(s)
+            saveNow(s.id) // now session(id) finds it in trashedSessions, so deletedAt gets persisted
         }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        trashedSessions.append(contentsOf: moved)
         trashedSessions.sort { ($0.deletedAt ?? $0.startedAt) > ($1.deletedAt ?? $1.startedAt) }
     }
 
@@ -369,8 +367,8 @@ final class SessionStore: ObservableObject {
         s.deletedAt = nil
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try? FileManager.default.moveItem(at: trashFolder(s.id), to: folder(s.id))
-        saveNow(s.id)
         sessions.insert(s, at: 0)
+        saveNow(s.id) // session(id) now finds it in sessions
         sessions.sort { $0.startedAt > $1.startedAt }
     }
 
