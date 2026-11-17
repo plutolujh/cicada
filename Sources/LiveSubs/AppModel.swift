@@ -696,6 +696,10 @@ final class AppModel: ObservableObject {
         // Someone spoke: the quiet timer starts over.
         recordWatch?.heard(at: Date())
         setEnding(recordWatch?.pending)
+        // 说话人停下来了：前一段交给 AI 润色，不阻断录音，只改完了的段。
+        if settings.recordAutoCorrect {
+            recorder.tryCorrectPreviousSegments(glossary: notes.glossary)
+        }
     }
 
     /// Whose voice a recorded sentence turned out to be: it goes into the meeting record, so the

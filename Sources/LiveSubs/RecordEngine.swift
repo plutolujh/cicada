@@ -929,6 +929,31 @@ final class RecordEngine: ObservableObject {
     @Published private(set) var correcting = false
     /// 已提交纠错的行 id 集合（避免重复）。
     private var correctedIDs: Set<String> = []
+    /// 正在飞行中的纠错行 id（避免同一段被两次送去纠错）。
+    private var pendingCorrectionIDs: Set<String> = []
+
+    /// 录音中自动纠错前一段：把已落定、尚未纠错且未在飞行中的行切成段，
+    /// 逐段送 AI，但留下最后一段（说话人可能还在说，句子还没完）。
+    /// `glossary` 取自 NotesEngine 的术语表，提升专名准确率。
+    func tryCorrectPreviousSegments(glossary: [String] = []) {
+        guard let ai, ai.usable else { return }
+        let candidates = lines.filter { $0.corrected == nil && !correctedIDs.contains($0.id) && !pendingCorrectionIDs.contains($0.id) }
+        guard !candidates.isEmpty else { return }
+        let segments = Self.segment(candidates)
+        // 只有一段，那就是说话人还在说的，不纠。
+        guard segments.count > 1 else { return }
+        for seg in segments.dropLast() {
+            let ids = Set(seg.map { $0.id })
+            pendingCorrectionIDs.formUnion(ids)
+            Task { [weak self] in
+                guard let self else { return }
+                await self.correctSegment(seg, glossary: glossary, ai: ai)
+                await MainActor.run {
+                    self.pendingCorrectionIDs.subtract(ids)
+                }
+            }
+        }
+    }
 
     /// 在录音结束后后台自动纠错：按静默/说话人/时长切段，逐段发 AI，只改错字/标点。
     /// `glossary` 取自 NotesEngine 的术语表，提升专名准确率。
