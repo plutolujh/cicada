@@ -22,6 +22,7 @@
   - 纪要：`notesLang:<mine|source>`、`meetingNotesLang:<…>`、`notesRegenerate:<id>=<mine|source>`、`notesWindow[:x,y,w,h]`、`notesClose`、`notesFrame`、`notesNow`、`notesState`、`notesShow:<id>`、`notesReplay:<id>`、`notesCapturable[:off]`
   - 结束会议：`endSim:<应用名>[,…]` 假装这些会议应用在通话（`endSim:` 全部挂断，`endSim:off` 回到真实情况），`endTimes:<静默秒>,<倒计时秒>,<挂断宽限秒>` 缩短等待（`endTimes:` 回到设置），`endKeep` 等于点“继续记录”，`endState` 写进日志
   - 渲染（不需要录屏权限）：`panelRender:<png>`（菜单栏面板，离屏画）、`windowsRender:<目录>`、`settingsRender:<栏目>=<png>`、`notesRender:<png>`、`mainShow:<id>[,transcript]`、`mainRender:<png>`、`speakTestRender:<png>`、`recordRender:<png>`（实时识别页）、`pillRender:<png>`（主窗口顶栏的胶囊）、`exportRender:<会议 id>=<png>`（导出面板）
+  - 会议列表：`pin:<会议 id>`（固定或取消固定）、`rightClick:<x>,<y>`（在主窗口里右击一个位置，用来打开右键菜单；x/y 是窗口内容坐标，左下角为原点）
   - 暂停：`listenPause` / `listenResume`（听系统声音）、`recordPause` / `recordResume`（录麦克风）、`listenState` / `captureState`（当前状态和计时）
   - 系统声音：`listenStats` 把识别链路写进日志（`results` 识别出的段数、`finals` 定稿的段数、`analyzerBuffers`/`analyzerSeconds` 送进识别器的音频、`convertFailures` 转换失败、`level` 输入的音量）。数字不动说明音频没进来，往上走但 `finals` 不动说明识别器没认出来
   - 切换来源：`switchConfirm:system` / `switchConfirm:mic` 把切换前那句问话弹出来，看它怎么写（确认后按“取消”即可）

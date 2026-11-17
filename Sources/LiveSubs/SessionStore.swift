@@ -77,11 +77,17 @@ final class SessionStore: ObservableObject {
     let trashRoot: URL
     private var saveWork: DispatchWorkItem?
 
-    init() {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let support = base.appendingPathComponent(DevBuild.supportFolder, isDirectory: true)
-        root = support.appendingPathComponent("Sessions", isDirectory: true)
-        trashRoot = support.appendingPathComponent("Trash", isDirectory: true)
+    /// The folders can be given, so the store can be pointed at a scratch folder in a test.
+    init(root rootURL: URL? = nil, trashRoot trashURL: URL? = nil) {
+        if let rootURL {
+            root = rootURL
+            trashRoot = trashURL ?? rootURL.deletingLastPathComponent().appendingPathComponent("Trash", isDirectory: true)
+        } else {
+            let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            let support = base.appendingPathComponent(DevBuild.supportFolder, isDirectory: true)
+            root = support.appendingPathComponent("Sessions", isDirectory: true)
+            trashRoot = support.appendingPathComponent("Trash", isDirectory: true)
+        }
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: trashRoot, withIntermediateDirectories: true)
         load()
@@ -326,8 +332,17 @@ final class SessionStore: ObservableObject {
     /// Pins or unpins a meeting. Pinned meetings are shown in their own group at the top.
     func togglePin(_ id: String) {
         guard let i = index(id) else { return }
-        sessions[i].pinned = !(sessions[i].pinned ?? false)
+        // A new array, assigned to the whole property: changing an element in place leaves the
+        // published value as it was, and the list would not redraw.
+        var updated = sessions
+        updated[i].pinned = !(updated[i].pinned ?? false)
+        sessions = updated
         id == liveID ? scheduleSave(id) : saveNow(id)
+    }
+
+    /// Whether a meeting is pinned right now. Read live, so a menu asked for later is right.
+    func isPinned(_ id: String) -> Bool {
+        sessions.first(where: { $0.id == id })?.pinned == true
     }
 
     /// Moves a meeting to the trash instead of deleting it outright, so it can be restored.

@@ -1793,6 +1793,26 @@ final class AppModel: ObservableObject {
                 try? png.write(to: URL(fileURLWithPath: arg))
             }
         case "mainShow": mainShow = arg
+        case "rightClick":
+            // rightClick:<x>,<y>: a right-click in the main window, to open a context menu.
+            let p = arg.split(separator: ",").compactMap { Double($0) }
+            guard p.count == 2,
+                  let view = NSApp.windows.first(where: { $0.contentView is NSHostingView<MainWindowView> })?.contentView else { break }
+            let loc = NSPoint(x: p[0], y: p[1])
+            let number = view.window?.windowNumber ?? 0
+            func mouse(_ type: NSEvent.EventType, _ pressure: Float) {
+                guard let e = NSEvent.mouseEvent(with: type, location: loc, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: number,
+                                                 context: nil, eventNumber: 0, clickCount: 1, pressure: pressure) else { return }
+                if type == .rightMouseDown { view.rightMouseDown(with: e) } else { view.rightMouseUp(with: e) }
+            }
+            mouse(.rightMouseDown, 1)
+            mouse(.rightMouseUp, 0)
+        case "pin":
+            // pin:<session id>: pin or unpin a meeting, to check the list without a right-click.
+            guard !arg.isEmpty else { break }
+            store.togglePin(arg)
+            debugLog("pin \(arg): \(store.isPinned(arg))")
         case "recordRender":
             // The recording surface drawn offscreen, for checking it without a person at the mic.
             let host = NSHostingView(rootView: CaptureView(model: self, notes: notes, engine: recorder, feed: capture)

@@ -572,6 +572,16 @@ struct KeyCap: View {
 
 // MARK: - Main window
 
+/// A meeting in the list, as a row of its own.
+///
+/// The pin is part of the row's identity. Pinning moves the meeting to another group, and
+/// SwiftUI carries the old row over with it — marker and right-click menu and all — so a
+/// meeting that changed its pin has to be a new row, drawn from the meeting as it is now.
+struct MeetingRow: Identifiable {
+    let session: Session
+    var id: String { session.pinned == true ? session.id + "#pinned" : session.id }
+}
+
 struct MainWindowView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var store: SessionStore
@@ -826,14 +836,17 @@ struct MainWindowView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {
                         // The newest day shows; older ones fold under one row until asked for (or searched).
+                        // The pinned group always shows: pinning a meeting must not hide the rest.
                         let all = groups
-                        let folded = query.isEmpty && !showOlder && all.count > 1
-                        ForEach(Array((folded ? Array(all.prefix(1)) : all).enumerated()), id: \.element.title) { i, g in
+                        let dated = all.filter { $0.title != L("固定") }
+                        let folded = query.isEmpty && !showOlder && dated.count > 1
+                        let shown = folded ? Array(all.prefix(all[0].title == L("固定") ? 2 : 1)) : all
+                        ForEach(Array(shown.enumerated()), id: \.element.title) { i, g in
                             Text(g.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(Palette.secondary)
                                 .padding(.horizontal, 12).padding(.top, i == 0 ? 0 : 18).padding(.bottom, 6)
-                            ForEach(g.sessions) { sessionRow($0) }
+                            ForEach(g.sessions.map { MeetingRow(session: $0) }) { sessionRow($0.session) }
                         }
-                        if query.isEmpty && all.count > 1 {
+                        if query.isEmpty && dated.count > 1 {
                             Button { withAnimation(.easeOut(duration: 0.2)) { showOlder.toggle() } } label: {
                                 HStack {
                                     Text(showOlder ? L("收起更早的会议") : (surface == "trash" ? L("更早的已删除会议") : L("更早的会议")))
@@ -988,15 +1001,10 @@ struct MainWindowView: View {
     /// Pinned meetings form their own group at the top, out of the time groups.
     private var groups: [(title: String, sessions: [Session])] {
         let cal = Calendar.current
+        var pinned: [Session] = []
         var out: [(title: String, sessions: [Session])] = []
         for s in filtered {
-            if s.pinned == true {
-                if out.isEmpty || out[0].title != L("固定") {
-                    out.insert((title: L("固定"), sessions: []), at: 0)
-                }
-                out[0].sessions.append(s)
-                continue
-            }
+            if s.pinned == true { pinned.append(s); continue }
             let d = (surface == "trash" ? s.deletedAt : s.startedAt) ?? s.startedAt
             let title: String
             if surface == "trash" {
@@ -1014,6 +1022,7 @@ struct MainWindowView: View {
             }
             if out.last?.title == title { out[out.count - 1].sessions.append(s) } else { out.append((title, [s])) }
         }
+        if !pinned.isEmpty { out.insert((title: L("固定"), sessions: pinned), at: 0) }
         return out
     }
 
@@ -1021,7 +1030,7 @@ struct MainWindowView: View {
         let selected = s.id == (selection ?? current?.id)
         let live = s.id == store.liveID
         let inTrash = surface == "trash"
-        let isPinned = s.pinned == true
+        let isPinned = store.isPinned(s.id)
         let isRenaming = renamingID == s.id
         let checked = selectedIDs.contains(s.id)
 
@@ -1084,7 +1093,9 @@ struct MainWindowView: View {
                 if s.renamed ?? !s.title.hasPrefix("会议 "), s.notes?.title != nil {
                     Button(L("恢复自动标题")) { store.rename(s.id, to: "") }
                 }
-                Button(isPinned ? L("取消固定") : L("固定到顶部")) { store.togglePin(s.id) }
+                // Read live when the menu is opened: the row may have been drawn before the
+                // meeting was pinned, and the label has to match the meeting as it is now.
+                Button(store.isPinned(s.id) ? L("取消固定") : L("固定到顶部")) { store.togglePin(s.id) }
                 Button(L("重命名")) { beginRename(s) }
                 Button(L("删除"), role: .destructive) { store.delete(s.id) }.disabled(live)
             }
