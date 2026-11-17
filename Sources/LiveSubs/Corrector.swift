@@ -97,11 +97,9 @@ enum Corrector {
         return out
     }
 
-    /// Polishes one chunk: the AI gets the sentences with their times and speakers, and answers
-    /// with the same sentences in the same order.
-    static func correct(items: [Item], endTimes: [String: Double] = [:], glossary: [String], ai: AIClient) async -> [(id: String, text: String)] {
-        guard let inputData = try? JSONEncoder().encode(items),
-              let inputJSON = String(data: inputData, encoding: .utf8) else { return [] }
+    /// The system instruction sent to the AI for one correction chunk. Extracted so it can be
+    /// tested without calling the service.
+    static func instruction(context: String, glossary: [String]) -> String {
         var instruction = """
         你是会议转写润色助手。收到一段语音识别原文（含时间戳、说话人），请仅修正错别字、同音字、漏字、多余字、标点。
         严格要求：
@@ -109,10 +107,30 @@ enum Corrector {
         - 不润色成书面语，保持口语原貌
         - 只输出一个 JSON 对象，形如 {"lines":[{"id":"原id","text":"修正后文本"}]}，与输入顺序、id 一一对应
         - 某行无需修改时 text 填原文
+        - 语音识别只听音不辨义，常见错误是同音字/近音字写错（如"思维画想"应为"思维画像"、"红西"应为"虹吸"、"一块"应为"一块儿"）。遇到这类情况必须按语境主动改对，不要因为"读音通顺"就保留原文。
+        - 判断依据只有语境：上下文、本场会议在讲什么、以及已知术语。读音对但语义不通的，一律按语义改。
         """
+        if !context.isEmpty {
+            instruction += "\n本场会议在讲：\(context)。这是判断同音字/错别字的最高优先级依据——转写里照着读音写出来的词，必须按这个语境来判断该是哪个词。"
+        }
         if !glossary.isEmpty {
             instruction += "\n已知术语/人名（识别易错→正确）：\n" + glossary.prefix(30).map { "- \($0)" }.joined(separator: "\n")
+            instruction += "\n术语表里的词是本场会议的既定说法，不要按自己的理解改写成别的词。"
         }
+        return instruction
+    }
+
+    /// Polishes one chunk: the AI gets the sentences with their times and speakers, and answers
+    /// with the same sentences in the same order.
+    ///
+    /// `context` is what the meeting is about, in the meeting's own words. The recognizer only
+    /// hears sounds, so a word that is written the way it was heard ("思维画想" for 思维画像) can
+    /// only be put right next to the subject: without it the service settles for a word that
+    /// merely sounds right.
+    static func correct(items: [Item], endTimes: [String: Double] = [:], glossary: [String], context: String = "", ai: AIClient) async -> [(id: String, text: String)] {
+        guard let inputData = try? JSONEncoder().encode(items),
+              let inputJSON = String(data: inputData, encoding: .utf8) else { return [] }
+        let instruction = Self.instruction(context: context, glossary: glossary)
         do {
             let reply = try await ai.chat(content: inputJSON, instruction: instruction, priority: .notes, json: true, maxTokens: 4096, timeout: 45)
             guard let outs = parse(reply) else {

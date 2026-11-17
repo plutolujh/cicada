@@ -76,4 +76,22 @@ struct CorrectorTests {
     @Test func anAnswerThatIsNotJsonIsNothing() {
         #expect(Corrector.parse("抱歉，我无法完成这个请求。") == nil)
     }
+
+    @Test func instructionWarnsAgainstHomophones() {
+        let p = Corrector.instruction(context: "", glossary: [])
+        #expect(p.contains("思维画像"))
+        #expect(p.contains("不要因为\"读音通顺\"就保留原文"))
+    }
+
+    @Test func contextIsPriorityRule() {
+        let p = Corrector.instruction(context: "讨论年度预算", glossary: [])
+        #expect(p.contains("本场会议在讲：讨论年度预算"))
+        #expect(p.contains("最高优先级依据"))
+    }
+
+    @Test func glossaryTermsAreProtected() {
+        let p = Corrector.instruction(context: "", glossary: ["思维画像（心理学概念；识别易错为 思维画想）"])
+        #expect(p.contains("术语表里的词是本场会议的既定说法"))
+        #expect(p.contains("不要按自己的理解改写成别的词"))
+    }
 }
